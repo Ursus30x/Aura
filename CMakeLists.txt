@@ -21,7 +21,12 @@ list(APPEND IMGUI_SOURCES
     "${IMGUI_DIR}/backends/imgui_impl_opengl3.h"
 )
 
-add_executable(App src/main.cpp ${IMGUI_SOURCES} ${GLAD_SOURCE})
+file(GLOB APP_SOURCES 
+    "src/*.cpp" 
+    "src/*.h"
+)
+
+add_executable(App src/main.cpp ${APP_SOURCES} ${IMGUI_SOURCES} ${GLAD_SOURCE} )
 
 target_include_directories(App PRIVATE 
     ${IMGUI_DIR}
