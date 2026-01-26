@@ -63,6 +63,7 @@ def main():
         print("Press SPACE to PAUSE/RESUME.")
         print("Press 'b' to print all current blendshapes.")
         print("Press 'd' to toggle debug mode (show all landmarks).")
+        print("Press 'q' to QUIT.")
         print("------------------------------------------------")
 
         # Force window to open on primary screen (top-left)
@@ -154,6 +155,11 @@ def main():
                     cv2.putText(img_to_show, "PAUSED", (20, 200), 
                                 cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                 
+                # Add exit text
+                h_display, w_display = img_to_show.shape[:2]
+                cv2.putText(img_to_show, "Press 'q' to exit", (w_display - 200, 30),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+
                 cv2.imshow('Face Mesh Blendshapes', img_to_show)
 
             if is_paused:
