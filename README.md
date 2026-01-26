@@ -13,6 +13,15 @@ sudo apt update
 sudo apt install build-essential cmake libglfw3-dev libzmq3-dev nlohmann-json3-dev python3-venv python3-pip
 ```
 
+### System Dependencies (Arch Linux)
+
+Install the necessary C++ build tools and libraries:
+
+```bash
+sudo pacman -Syu
+sudo pacman -S cmake glfw-x11 glm zeromq python-pip python-venv
+```
+
 ### Python Dependencies
 
 The Computer Vision module requires Python 3.8+ and the following packages:
@@ -33,7 +42,8 @@ pip install opencv-python mediapipe pyzmq
 
 1.  Create a build directory in the project root:
     ```bash
-    mkdir build
+    mkdir buildff
+	
     cd build
     ```
 
