@@ -47,6 +47,8 @@ def main():
         # Timing setup
         source_fps = cap.get(cv2.CAP_PROP_FPS)
         target_frame_time = 1 / source_fps if source_fps > 0 else 0.033
+        frame_time_ms = 1000 / source_fps if source_fps > 0 else 33
+        frame_number = 0
         
         is_paused = False
         debug_mode = False
@@ -72,11 +74,14 @@ def main():
 
             if not is_paused:
                 success, frame = cap.read()
-                if not success: break
+                if not success:
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
+                    continue
 
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
-                timestamp = int(cap.get(cv2.CAP_PROP_POS_MSEC))
+                timestamp = int(frame_number * frame_time_ms)
+                frame_number += 1
                 
                 result = landmarker.detect_for_video(mp_image, timestamp)
                 
