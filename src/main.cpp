@@ -13,17 +13,34 @@
 
 #include "objLoader.h"
 
-// --- Morphing Vertex Shader ---
+// --- Multi-Target Morph Vertex Shader (Supports 5 Targets) ---
 const char* vertexShaderSource = R"(
 #version 450 core
-// Model 1 Data
-layout (location = 0) in vec3 aPos1;
-layout (location = 1) in vec3 aNormal1;
-layout (location = 2) in vec2 aTexCoord; // We use UVs from Model 1 only
 
-// Model 2 Data (Target)
-layout (location = 3) in vec3 aPos2;
-layout (location = 4) in vec3 aNormal2;
+// 1. Base Model (Neutral) - Loc 0, 1, 2
+layout (location = 0) in vec3 aPosBase;
+layout (location = 1) in vec3 aNormalBase;
+layout (location = 2) in vec2 aTexCoord; 
+
+// 2. Mouth Open - Loc 3, 4
+layout (location = 3) in vec3 aPosMouth;
+layout (location = 4) in vec3 aNormalMouth;
+
+// 3. Left Eye Full - Loc 5, 6
+layout (location = 5) in vec3 aPosLEyeFull;
+layout (location = 6) in vec3 aNormalLEyeFull;
+
+// 4. Left Eye Half - Loc 7, 8
+layout (location = 7) in vec3 aPosLEyeHalf;
+layout (location = 8) in vec3 aNormalLEyeHalf;
+
+// 5. Right Eye Full - Loc 9, 10
+layout (location = 9) in vec3 aPosREyeFull;
+layout (location = 10) in vec3 aNormalREyeFull;
+
+// 6. Right Eye Half - Loc 11, 12
+layout (location = 11) in vec3 aPosREyeHalf;
+layout (location = 12) in vec3 aNormalREyeHalf;
 
 out vec3 FragPos;
 out vec3 Normal;
@@ -31,15 +48,43 @@ out vec3 Normal;
 uniform mat4 model;
 uniform mat4 view;
 uniform mat4 projection;
-uniform float blendFactor; // 0.0 = Model 1, 1.0 = Model 2
+
+// Weights
+uniform float wMouth;
+uniform float wLEyeFull;
+uniform float wLEyeHalf;
+uniform float wREyeFull;
+uniform float wREyeHalf;
 
 void main() {
-    // Linear Interpolation (Lerp)
-    vec3 mixedPos = mix(aPos1, aPos2, blendFactor);
-    vec3 mixedNorm = normalize(mix(aNormal1, aNormal2, blendFactor));
+    // Calculate Deltas (Target - Base)
+    vec3 dMouth    = aPosMouth    - aPosBase;
+    vec3 dLEyeFull = aPosLEyeFull - aPosBase;
+    vec3 dLEyeHalf = aPosLEyeHalf - aPosBase;
+    vec3 dREyeFull = aPosREyeFull - aPosBase;
+    vec3 dREyeHalf = aPosREyeHalf - aPosBase;
 
-    FragPos = vec3(model * vec4(mixedPos, 1.0));
-    Normal = mat3(transpose(inverse(model))) * mixedNorm;  
+    // Sum Positions
+    vec3 finalPos = aPosBase 
+                  + (dMouth * wMouth)
+                  + (dLEyeFull * wLEyeFull) + (dLEyeHalf * wLEyeHalf)
+                  + (dREyeFull * wREyeFull) + (dREyeHalf * wREyeHalf);
+
+    // Calculate Normal Deltas
+    vec3 nMouth    = aNormalMouth    - aNormalBase;
+    vec3 nLEyeFull = aNormalLEyeFull - aNormalBase;
+    vec3 nLEyeHalf = aNormalLEyeHalf - aNormalBase;
+    vec3 nREyeFull = aNormalREyeFull - aNormalBase;
+    vec3 nREyeHalf = aNormalREyeHalf - aNormalBase;
+
+    // Sum Normals
+    vec3 finalNorm = normalize(aNormalBase 
+                  + (nMouth * wMouth)
+                  + (nLEyeFull * wLEyeFull) + (nLEyeHalf * wLEyeHalf)
+                  + (nREyeFull * wREyeFull) + (nREyeHalf * wREyeHalf));
+
+    FragPos = vec3(model * vec4(finalPos, 1.0));
+    Normal = mat3(transpose(inverse(model))) * finalNorm;  
     
     gl_Position = projection * view * vec4(FragPos, 1.0);
 }
@@ -92,10 +137,33 @@ void framebuffer_size_callback(GLFWwindow* window, int width, int height) {
     glViewport(0, 0, width, height);
 }
 
+// Helper to load into vector and print status
+bool loadMesh(const char* path, std::vector<Vertex>& mesh) {
+    std::cout << "Loading: " << path << "... ";
+    if (loadOBJ(path, mesh)) {
+        std::cout << "OK (" << mesh.size() << " v)" << std::endl;
+        return true;
+    }
+    return false;
+}
+
+// Helper to setup VBO for a target (Pos + Normal only)
+void setupTargetVBO(GLuint& VBO, const std::vector<Vertex>& mesh, int locPos, int locNorm) {
+    glGenBuffers(1, &VBO);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO);
+    glBufferData(GL_ARRAY_BUFFER, mesh.size() * sizeof(Vertex), mesh.data(), GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(locPos, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+    glEnableVertexAttribArray(locPos);
+    
+    glVertexAttribPointer(locNorm, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
+    glEnableVertexAttribArray(locNorm);
+}
+
 int main(int argc, char** argv) {
-    // Check args
-    if (argc < 3) {
-        std::cerr << "Usage: " << argv[0] << " <model1.obj> <model2.obj>" << std::endl;
+    // We expect 1 Base + 5 Targets = 6 files + 1 executable arg = 7 argc
+    if (argc < 7) {
+        std::cerr << "Usage: " << argv[0] << " <base> <mouth> <L_Full> <L_Half> <R_Full> <R_Half>" << std::endl;
         return -1;
     }
 
@@ -104,13 +172,12 @@ int main(int argc, char** argv) {
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 5);
     glfwWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
-    GLFWwindow* window = glfwCreateWindow(1280, 720, "Morph Target Test", NULL, NULL);
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "Eye Blink Correction", NULL, NULL);
     if (!window) { glfwTerminate(); return -1; }
     glfwMakeContextCurrent(window);
     glfwSwapInterval(1);
 
     if (gladLoadGL(glfwGetProcAddress) == 0) return -1;
-
     glViewport(0, 0, 1280, 720);
     glfwSetFramebufferSizeCallback(window, framebuffer_size_callback);
 
@@ -123,104 +190,99 @@ int main(int argc, char** argv) {
     ImGui_ImplOpenGL3_Init("#version 450");
 
     // --- LOAD MODELS ---
-    std::vector<Vertex> mesh1, mesh2;
-    bool loaded1 = loadOBJ(argv[1], mesh1);
-    bool loaded2 = loadOBJ(argv[2], mesh2);
+    std::vector<Vertex> base, mouth, lFull, lHalf, rFull, rHalf;
+    
+    if (!loadMesh(argv[1], base)) return -1;
+    if (!loadMesh(argv[2], mouth)) return -1;
+    if (!loadMesh(argv[3], lFull)) return -1;
+    if (!loadMesh(argv[4], lHalf)) return -1;
+    if (!loadMesh(argv[5], rFull)) return -1;
+    if (!loadMesh(argv[6], rHalf)) return -1;
 
-    if (!loaded1 || !loaded2) {
-        std::cerr << "Failed to load one of the models." << std::endl;
-        return -1;
-    }
-
-    // CRITICAL: Topology check
-    // Vertex count must match exactly for morphing to work by index
-    if (mesh1.size() != mesh2.size()) {
-        std::cerr << "Error: Models must have identical vertex counts!" << std::endl;
-        std::cerr << "Model 1: " << mesh1.size() << " | Model 2: " << mesh2.size() << std::endl;
+    // Topology Check
+    size_t count = base.size();
+    if (mouth.size() != count || lFull.size() != count || lHalf.size() != count || rFull.size() != count || rHalf.size() != count) {
+        std::cerr << "Error: Vertex counts mismatch!" << std::endl;
         return -1;
     }
 
     // --- GPU BUFFERS ---
-    GLuint VAO, VBO1, VBO2;
+    GLuint VAO;
     glGenVertexArrays(1, &VAO);
-    glGenBuffers(1, &VBO1);
-    glGenBuffers(1, &VBO2);
-
     glBindVertexArray(VAO);
 
-    // 1. Bind Model 1 Data (Positions, Normals, UVs)
-    glBindBuffer(GL_ARRAY_BUFFER, VBO1);
-    glBufferData(GL_ARRAY_BUFFER, mesh1.size() * sizeof(Vertex), mesh1.data(), GL_STATIC_DRAW);
-
-    // Attrib 0: Pos1
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
+    // 1. Base (0, 1, 2) - Includes UVs
+    GLuint VBO_Base;
+    glGenBuffers(1, &VBO_Base);
+    glBindBuffer(GL_ARRAY_BUFFER, VBO_Base);
+    glBufferData(GL_ARRAY_BUFFER, base.size() * sizeof(Vertex), base.data(), GL_STATIC_DRAW);
+    
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0); // Pos
     glEnableVertexAttribArray(0);
-    // Attrib 1: Normal1
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal)); // Norm
     glEnableVertexAttribArray(1);
-    // Attrib 2: UV (Shared)
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texUV));
+    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, texUV)); // UV
     glEnableVertexAttribArray(2);
 
-    // 2. Bind Model 2 Data (Positions, Normals)
-    glBindBuffer(GL_ARRAY_BUFFER, VBO2);
-    glBufferData(GL_ARRAY_BUFFER, mesh2.size() * sizeof(Vertex), mesh2.data(), GL_STATIC_DRAW);
-
-    // Attrib 3: Pos2
-    glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)0);
-    glEnableVertexAttribArray(3);
-    // Attrib 4: Normal2
-    glVertexAttribPointer(4, 3, GL_FLOAT, GL_FALSE, sizeof(Vertex), (void*)offsetof(Vertex, normal));
-    glEnableVertexAttribArray(4);
+    // 2. Targets (Pos + Norm only)
+    GLuint VBO_Mouth, VBO_LF, VBO_LH, VBO_RF, VBO_RH;
+    
+    setupTargetVBO(VBO_Mouth, mouth, 3, 4);
+    setupTargetVBO(VBO_LF,    lFull, 5, 6);
+    setupTargetVBO(VBO_LH,    lHalf, 7, 8);
+    setupTargetVBO(VBO_RF,    rFull, 9, 10);
+    setupTargetVBO(VBO_RH,    rHalf, 11, 12);
 
     GLuint shaderProgram = CreateShader(vertexShaderSource, fragmentShaderSource);
     
-    // State
+    // App State
     glEnable(GL_DEPTH_TEST);
     glm::vec3 clear_color(0.2f);
     glm::vec3 mesh_color(1.0f, 0.5f, 0.2f);
     glm::vec3 camera_view(0.0f, 0.0f, -4.0f);
     
-    // Rotation state
-    bool autoRotate = true;
+    bool autoRotate = false;
     float rotationSpeed = 1.0f;
-    float manualRotation = 0.0f; // In degrees
-    float blendFactor = 0.0f;
+    float manualRotation = 0.0f;
+
+    // --- User Sliders (0.0 to 1.0) ---
+    float userMouth = 0.0f;
+    float userLeftEye = 0.0f;
+    float userRightEye = 0.0f;
 
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
 
-        // ImGui
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
         {
-            ImGui::Begin("Morph Controls"); 
-            ImGui::Text("Vertices: %lu", mesh1.size());
+            ImGui::Begin("Face Controller"); 
+            ImGui::Text("Intermediate Shape Logic Active");
             ImGui::Separator();
             
-            // Morph Slider
-            ImGui::SliderFloat("Morph Blend", &blendFactor, 0.0f, 1.0f);
-            ImGui::Separator();
+            // 1. Mouth Slider
+            ImGui::SliderFloat("Mouth Open", &userMouth, 0.0f, 1.0f);
 
-            // Rotation Controls
-            ImGui::Checkbox("Auto Rotate", &autoRotate);
-            if (autoRotate) {
-                ImGui::SliderFloat("Speed", &rotationSpeed, 0.0f, 5.0f);
-            } else {
-                // Slider from 0 to 360 degrees
-                ImGui::SliderFloat("Angle", &manualRotation, 0.0f, 360.0f);
-            }
+            // 2. Eye Sliders (These drive the intermediate logic)
+            
+            ImGui::SliderFloat("Left Eye Blink", &userLeftEye, 0.0f, 1.0f);
+            ImGui::SliderFloat("Right Eye Blink", &userRightEye, 0.0f, 1.0f);
             
             ImGui::Separator();
+            ImGui::Text("Scene Settings");
             ImGui::ColorEdit3("Mesh Color", (float*)&mesh_color);
             ImGui::DragFloat3("Camera", (float*)&camera_view, 0.1f);
+            
+            ImGui::Checkbox("Auto Rotate", &autoRotate);
+            if (autoRotate) ImGui::SliderFloat("Speed", &rotationSpeed, 0.0f, 5.0f);
+            else ImGui::SliderFloat("Rotation", &manualRotation, 0.0f, 360.0f);
+            
             ImGui::End();
         }
 
         ImGui::Render();
-        
         int w, h;
         glfwGetFramebufferSize(window, &w, &h);
         glViewport(0, 0, w, h);
@@ -229,32 +291,54 @@ int main(int argc, char** argv) {
 
         glUseProgram(shaderProgram);
 
+        // --- INTERMEDIATE SHAPE LOGIC ---
+        auto calculateEyeWeights = [](float slider, float& wHalf, float& wFull) {
+            if (slider <= 0.5f) {
+                // Phase 1: Base -> Half
+                // Slider 0.0 -> wHalf 0.0
+                // Slider 0.5 -> wHalf 1.0
+                wHalf = slider * 2.0f;
+                wFull = 0.0f;
+            } else {
+                // Phase 2: Half -> Full
+                // Slider 0.5 -> wHalf 1.0, wFull 0.0
+                // Slider 1.0 -> wHalf 0.0, wFull 1.0
+                float t = (slider - 0.5f) * 2.0f;
+                wHalf = 1.0f - t;
+                wFull = t;
+            }
+        };
+
+        float wLF, wLFull, wRF, wRFull;
+        calculateEyeWeights(userLeftEye, wLF, wLFull);
+        calculateEyeWeights(userRightEye, wRF, wRFull);
+        // --------------------------------
+
         // Uniforms
         glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)w / (float)h, 0.1f, 100.0f);
         glm::mat4 view = glm::translate(glm::mat4(1.0f), camera_view);
         glm::mat4 model = glm::mat4(1.0f);
 
-        // --- ROTATION LOGIC ---
-        float finalAngle;
-        if (autoRotate) {
-            finalAngle = (float)glfwGetTime() * rotationSpeed;
-        } else {
-            finalAngle = glm::radians(manualRotation);
-        }
+        float finalAngle = autoRotate ? (float)glfwGetTime() * rotationSpeed : glm::radians(manualRotation);
         model = glm::rotate(model, finalAngle, glm::vec3(0.0f, 1.0f, 0.0f));
-        // ----------------------
 
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, &projection[0][0]);
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, &view[0][0]);
         glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, &model[0][0]);
         
-        glUniform1f(glGetUniformLocation(shaderProgram, "blendFactor"), blendFactor);
+        // Pass Computed Weights
+        glUniform1f(glGetUniformLocation(shaderProgram, "wMouth"),    userMouth);
+        glUniform1f(glGetUniformLocation(shaderProgram, "wLEyeFull"), wLFull);
+        glUniform1f(glGetUniformLocation(shaderProgram, "wLEyeHalf"), wLF);
+        glUniform1f(glGetUniformLocation(shaderProgram, "wREyeFull"), wRFull);
+        glUniform1f(glGetUniformLocation(shaderProgram, "wREyeHalf"), wRF);
+        
         glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, &mesh_color[0]);
         glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
         glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 2.0f, 2.0f, 2.0f);
 
         glBindVertexArray(VAO);
-        glDrawArrays(GL_TRIANGLES, 0, mesh1.size());
+        glDrawArrays(GL_TRIANGLES, 0, base.size());
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
         glfwSwapBuffers(window);
@@ -262,8 +346,12 @@ int main(int argc, char** argv) {
 
     // Cleanup
     glDeleteVertexArrays(1, &VAO);
-    glDeleteBuffers(1, &VBO1);
-    glDeleteBuffers(1, &VBO2);
+    glDeleteBuffers(1, &VBO_Base);
+    glDeleteBuffers(1, &VBO_Mouth);
+    glDeleteBuffers(1, &VBO_LF);
+    glDeleteBuffers(1, &VBO_LH);
+    glDeleteBuffers(1, &VBO_RF);
+    glDeleteBuffers(1, &VBO_RH);
     glDeleteProgram(shaderProgram);
 
     ImGui_ImplOpenGL3_Shutdown();
