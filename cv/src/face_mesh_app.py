@@ -17,6 +17,9 @@ def download_model():
         urllib.request.urlretrieve(url, filename)
     return filename
 
+def remap(value, low, high):
+    return max(0.0, min(1.0, (value - low) / (high - low)))
+
 def main():
     if len(sys.argv) < 2:
         print("Usage: python face_mesh_blendshapes.py path/to/video.mp4")
@@ -88,6 +91,10 @@ def main():
                     # We invert it because you asked for "Openness" (0=Closed, 1=Open).
                     l_open = 1.0 - bs_map.get('eyeBlinkLeft', 0.0)
                     r_open = 1.0 - bs_map.get('eyeBlinkRight', 0.0)
+
+                    # Remap openness to ensure fully closed eyes are 0.0
+                    l_open = remap(l_open, 0.2, 0.8)
+                    r_open = remap(r_open, 0.2, 0.8)
 
                     # 3. Mouth Openness (jawOpen)
                     mouth_open = bs_map.get('jawOpen', 0.0)

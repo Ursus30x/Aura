@@ -7,9 +7,13 @@
 #include "backends/imgui_impl_glfw.h"
 #include "backends/imgui_impl_opengl3.h"
 
+#include <zmq.hpp>
+#include <nlohmann/json.hpp>
+
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <algorithm>
 
 #include "objLoader.h"
 
@@ -160,6 +164,40 @@ void setupTargetVBO(GLuint& VBO, const std::vector<Vertex>& mesh, int locPos, in
     glEnableVertexAttribArray(locNorm);
 }
 
+void normalizeMeshes(std::vector<Vertex>& base, std::vector<Vertex>& mouth, 
+                     std::vector<Vertex>& lFull, std::vector<Vertex>& lHalf, 
+                     std::vector<Vertex>& rFull, std::vector<Vertex>& rHalf) {
+    if (base.empty()) return;
+
+    glm::vec3 minPos = base[0].position;
+    glm::vec3 maxPos = base[0].position;
+
+    for (const auto& v : base) {
+        minPos.x = std::min(minPos.x, v.position.x);
+        minPos.y = std::min(minPos.y, v.position.y);
+        minPos.z = std::min(minPos.z, v.position.z);
+        maxPos.x = std::max(maxPos.x, v.position.x);
+        maxPos.y = std::max(maxPos.y, v.position.y);
+        maxPos.z = std::max(maxPos.z, v.position.z);
+    }
+
+    glm::vec3 center = (minPos + maxPos) * 0.5f;
+    float maxDim = std::max({maxPos.x - minPos.x, maxPos.y - minPos.y, maxPos.z - minPos.z});
+    float scale = (maxDim > 0.0f) ? (2.5f / maxDim) : 1.0f;
+
+    auto apply = [&](std::vector<Vertex>& mesh) {
+        for (auto& v : mesh) {
+            v.position = (v.position - center) * scale;
+        }
+    };
+
+    apply(base); apply(mouth);
+    apply(lFull); apply(lHalf);
+    apply(rFull); apply(rHalf);
+    
+    std::cout << "Normalized -> Center: (" << center.x << "," << center.y << "," << center.z << ") Scale: " << scale << std::endl;
+}
+
 int main(int argc, char** argv) {
     // We expect 1 Base + 5 Targets = 6 files + 1 executable arg = 7 argc
     if (argc < 7) {
@@ -206,6 +244,9 @@ int main(int argc, char** argv) {
         return -1;
     }
 
+    // Normalize all meshes to fit screen
+    normalizeMeshes(base, mouth, lFull, lHalf, rFull, rHalf);
+
     // --- GPU BUFFERS ---
     GLuint VAO;
     glGenVertexArrays(1, &VAO);
@@ -250,8 +291,31 @@ int main(int argc, char** argv) {
     float userLeftEye = 0.0f;
     float userRightEye = 0.0f;
 
+    // --- ZeroMQ Setup ---
+    zmq::context_t context(1);
+    zmq::socket_t subscriber(context, ZMQ_SUB);
+    subscriber.connect("tcp://localhost:5555");
+    subscriber.set(zmq::sockopt::subscribe, "");
+
     while (!glfwWindowShouldClose(window)) {
         glfwPollEvents();
+
+        // --- ZeroMQ Receive ---
+        zmq::message_t update;
+        while (subscriber.recv(update, zmq::recv_flags::dontwait)) {
+            try {
+                std::string msg_str(static_cast<char*>(update.data()), update.size());
+                auto j = nlohmann::json::parse(msg_str);
+                
+                if (j.contains("eyes")) {
+                    userLeftEye = 1.0f - j["eyes"]["left"].get<float>();
+                    userRightEye = 1.0f - j["eyes"]["right"].get<float>();
+                }
+                if (j.contains("mouth")) {
+                    userMouth = j["mouth"]["open"].get<float>();
+                }
+            } catch(...) {}
+        }
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
@@ -272,79 +336,67 @@ int main(int argc, char** argv) {
             
             ImGui::Separator();
             ImGui::Text("Scene Settings");
-            ImGui::ColorEdit3("Mesh Color", (float*)&mesh_color);
-            ImGui::DragFloat3("Camera", (float*)&camera_view, 0.1f);
-            
             ImGui::Checkbox("Auto Rotate", &autoRotate);
-            if (autoRotate) ImGui::SliderFloat("Speed", &rotationSpeed, 0.0f, 5.0f);
-            else ImGui::SliderFloat("Rotation", &manualRotation, 0.0f, 360.0f);
-            
+            ImGui::SliderFloat("Rotation Speed", &rotationSpeed, 0.0f, 5.0f);
+            ImGui::SliderFloat("Manual Rotation", &manualRotation, 0.0f, 360.0f);
+            ImGui::ColorEdit3("Mesh Color", (float*)&mesh_color);
+            ImGui::ColorEdit3("Background", (float*)&clear_color);
+
             ImGui::End();
         }
 
         ImGui::Render();
-        int w, h;
-        glfwGetFramebufferSize(window, &w, &h);
-        glViewport(0, 0, w, h);
+        int display_w, display_h;
+        glfwGetFramebufferSize(window, &display_w, &display_h);
+        glViewport(0, 0, display_w, display_h);
         glClearColor(clear_color.x, clear_color.y, clear_color.z, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         glUseProgram(shaderProgram);
 
-        // --- INTERMEDIATE SHAPE LOGIC ---
-        auto calculateEyeWeights = [](float slider, float& wHalf, float& wFull) {
-            if (slider <= 0.5f) {
-                // Phase 1: Base -> Half
-                // Slider 0.0 -> wHalf 0.0
-                // Slider 0.5 -> wHalf 1.0
-                wHalf = slider * 2.0f;
-                wFull = 0.0f;
-            } else {
-                // Phase 2: Half -> Full
-                // Slider 0.5 -> wHalf 1.0, wFull 0.0
-                // Slider 1.0 -> wHalf 0.0, wFull 1.0
-                float t = (slider - 0.5f) * 2.0f;
-                wHalf = 1.0f - t;
-                wFull = t;
-            }
-        };
-
-        float wLF, wLFull, wRF, wRFull;
-        calculateEyeWeights(userLeftEye, wLF, wLFull);
-        calculateEyeWeights(userRightEye, wRF, wRFull);
-        // --------------------------------
-
-        // Uniforms
-        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)w / (float)h, 0.1f, 100.0f);
+        // Matrices
+        glm::mat4 projection = glm::perspective(glm::radians(45.0f), (float)display_w / (float)display_h, 0.1f, 100.0f);
         glm::mat4 view = glm::translate(glm::mat4(1.0f), camera_view);
+        
         glm::mat4 model = glm::mat4(1.0f);
+        if (autoRotate) {
+            model = glm::rotate(model, (float)glfwGetTime() * rotationSpeed, glm::vec3(0.0f, 1.0f, 0.0f));
+        } else {
+            model = glm::rotate(model, glm::radians(manualRotation), glm::vec3(0.0f, 1.0f, 0.0f));
+        }
 
-        float finalAngle = autoRotate ? (float)glfwGetTime() * rotationSpeed : glm::radians(manualRotation);
-        model = glm::rotate(model, finalAngle, glm::vec3(0.0f, 1.0f, 0.0f));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, glm::value_ptr(projection));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, glm::value_ptr(view));
+        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, glm::value_ptr(model));
 
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "projection"), 1, GL_FALSE, &projection[0][0]);
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "view"), 1, GL_FALSE, &view[0][0]);
-        glUniformMatrix4fv(glGetUniformLocation(shaderProgram, "model"), 1, GL_FALSE, &model[0][0]);
-        
-        // Pass Computed Weights
-        glUniform1f(glGetUniformLocation(shaderProgram, "wMouth"),    userMouth);
-        glUniform1f(glGetUniformLocation(shaderProgram, "wLEyeFull"), wLFull);
-        glUniform1f(glGetUniformLocation(shaderProgram, "wLEyeHalf"), wLF);
-        glUniform1f(glGetUniformLocation(shaderProgram, "wREyeFull"), wRFull);
-        glUniform1f(glGetUniformLocation(shaderProgram, "wREyeHalf"), wRF);
-        
-        glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, &mesh_color[0]);
+        glUniform3fv(glGetUniformLocation(shaderProgram, "objectColor"), 1, glm::value_ptr(mesh_color));
         glUniform3f(glGetUniformLocation(shaderProgram, "lightColor"), 1.0f, 1.0f, 1.0f);
-        glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 2.0f, 2.0f, 2.0f);
+        glUniform3f(glGetUniformLocation(shaderProgram, "lightPos"), 2.0f, 2.0f, 5.0f);
+
+        // Weights
+        // Map 0..1 (Open) to 1..0 (Blink Weight)
+        float wL = 1.0f - userLeftEye;
+        float wR = 1.0f - userRightEye;
+        
+        glUniform1f(glGetUniformLocation(shaderProgram, "wMouth"), userMouth);
+        glUniform1f(glGetUniformLocation(shaderProgram, "wLEyeFull"), wL);
+        glUniform1f(glGetUniformLocation(shaderProgram, "wLEyeHalf"), 0.0f); // Not using half for now
+        glUniform1f(glGetUniformLocation(shaderProgram, "wREyeFull"), wR);
+        glUniform1f(glGetUniformLocation(shaderProgram, "wREyeHalf"), 0.0f);
 
         glBindVertexArray(VAO);
         glDrawArrays(GL_TRIANGLES, 0, base.size());
 
         ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+
         glfwSwapBuffers(window);
     }
 
     // Cleanup
+    ImGui_ImplOpenGL3_Shutdown();
+    ImGui_ImplGlfw_Shutdown();
+    ImGui::DestroyContext();
+
     glDeleteVertexArrays(1, &VAO);
     glDeleteBuffers(1, &VBO_Base);
     glDeleteBuffers(1, &VBO_Mouth);
@@ -354,9 +406,9 @@ int main(int argc, char** argv) {
     glDeleteBuffers(1, &VBO_RH);
     glDeleteProgram(shaderProgram);
 
-    ImGui_ImplOpenGL3_Shutdown();
-    ImGui_ImplGlfw_Shutdown();
-    ImGui::DestroyContext();
+    glfwDestroyWindow(window);
     glfwTerminate();
+
     return 0;
 }
+  

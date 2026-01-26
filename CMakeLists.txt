@@ -5,6 +5,8 @@ set(CMAKE_CXX_STANDARD 17)
 
 find_package(glfw3 REQUIRED)
 find_package(glm REQUIRED)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(ZMQ REQUIRED libzmq)
 
 set(GLAD_DIR "vendor/glad")
 set(GLAD_SOURCE "${GLAD_DIR}/src/gl.c")
@@ -31,10 +33,12 @@ add_executable(App src/main.cpp ${APP_SOURCES} ${IMGUI_SOURCES} ${GLAD_SOURCE} )
 target_include_directories(App PRIVATE 
     ${IMGUI_DIR}
     "${GLAD_DIR}/include"
+    ${ZMQ_INCLUDE_DIRS}
 )
 
 target_link_libraries(App 
     glfw
     GL 
     dl
+    ${ZMQ_LIBRARIES}
 )
