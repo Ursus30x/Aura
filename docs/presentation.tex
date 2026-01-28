@@ -1,6 +1,7 @@
 \documentclass{beamer}
 \usetheme{Darmstadt}
 \usepackage{polski}
+\usepackage{graphicx}
 
 \title{Generatywny awatar 3D sterowany w czasie rzeczywistym na podstawie obrazu z jednej kamery}
 \author{Józef Sztabiński, Emilian Zawrotny, Jakub Szymczyk, Krzysztof Taraszkiewicz}
@@ -14,16 +15,58 @@
 \section{Opis projektu}
   \begin{frame}{Cel projektu}
     Celem projektu jest wytworzenie aplikacji komputerowej, która na podstawie obrazu ze standardowej kamery 2D (np. tej wbudowanej w laptop) generuje i animuje awatar 3D w czasie rzeczywistym.
-    \begin{figure}
-      \caption{Placeholder na zdjęcie obrazujące sposób działania programu}
+
+    \begin{figure}[ht]
+      \centering
+      \begin{minipage}{0.3\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{assets/juzek.png}
+      \end{minipage}
+      \hspace{0.05\textwidth}
+      $\rightarrow$
+      \hspace{0.05\textwidth}
+      \begin{minipage}{0.3\textwidth}
+        \centering
+        \includegraphics[width=\linewidth]{assets/staruch.png}
+      \end{minipage}
+      \caption{Transformation from image 1 to image 2}
+      \label{fig:arrow-images}
     \end{figure}
   \end{frame}
-
 \section{Zastosowane technologie}
-  
+  \begin{frame}{OpenGL}
+    \begin{figure}
+      \includegraphics[width=0.25\textwidth]{assets/opengl.png}
+    \end{figure}
+    Wieloplatformowa biblioteka do grafiki 2D i 3D. W naszym projekcie wykorzystywana do renderowania awatara.
+  \end{frame}
+  \begin{frame}{Mediapipe}
+    \begin{figure}
+      \includegraphics[width=0.25\textwidth]{assets/mediapipe.jpg}
+    \end{figure}
+    Framework stworzony przez Google do analizy wideo w czasie rzeczywistym.
+    Umożliwia on ekstrakcje cech twarzy takich jak stopień otwarcia oczu czy ust, a także uśmiech - czyli to czego potrzebujemy do animowania awatara.
+  \end{frame}
 \section{Metodyka projektu}
-
+  \begin{frame}{Ogólny opis rozwiązania}
+    Nasz projekt składa się z dwóch modułów:
+    \begin{itemize}
+      \item Moduł ekstrakcji cech twarzy, napisany w Pythonie z wykorzystaniem Mediapipe
+      \item Moduł renderowania awatara na podstawie cech dostarczonych przez powyższy moduł. Napisany w C++ i OpenGL.
+    \end{itemize}
+  \end{frame}
+  \begin{frame}{Szczegółowy opis modułu ekstrakcji cech twarzy}
+    placeholder
+  \end{frame}
+  \begin{frame}{Szczegółowy opis modułu renderowania awatara}
+    placeholder
+  \end{frame}
 \section{Wyzwania}
-
+  \begin{frame}
+    placeholder
+  \end{frame}
 \section{Podsumowanie}
+  \begin{frame}
+    placeholder
+  \end{frame}
 \end{document}
