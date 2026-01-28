@@ -55,18 +55,50 @@
       \item Moduł renderowania awatara na podstawie cech dostarczonych przez powyższy moduł. Napisany w C++ i OpenGL.
     \end{itemize}
   \end{frame}
-  \begin{frame}{Szczegółowy opis modułu ekstrakcji cech twarzy}
-    placeholder
+  \begin{frame}{Aktualne rozwiązanie renderowania awatara}
+    Aktualnie moduł renderowania awatara operuje na wielu modelach reprezentujacych różne stany twarzy.
+    Na podstawie danych dostarczanych przez moduł ekstrakcji cech dokonujemy mesh blending.
+    
+    Choć to rozwiązanie jest proste w implementacji a także całkiem wydajne, posiada poważne ograniczenia:
+    \begin{itemize}
+      \item Brak ruchów głowy, skupiamy się wyłącznie na cechach twarzy (np. uśmiech, otwarcie/zamknięcie oczu)
+      \item Wymaga tworzenia wielu modeli
+      \item Ograniczenie w ilości możliwych ekpresji twarzy
+    \end{itemize}
   \end{frame}
-  \begin{frame}{Szczegółowy opis modułu renderowania awatara}
-    placeholder
+  \begin{frame}{Możliwe rozwiązania}
+    W dalszej części prac nad projektem chcemy przetestować następujące rozwiązania:
+    \begin{itemize}
+      \item System animacji szkieletowej
+      \item Ekstrakcja landmarków oraz deformacje twarzy z wykorzystaniem tzw. control points
+      \item Proceduralne łączenie wierzchołków twarzy z awatarem
+      \item Śledzenie oczu
+    \end{itemize}
   \end{frame}
-\section{Wyzwania}
-  \begin{frame}
-    placeholder
+  \begin{frame}{Problemy}
+    Potencjalne problemy które będziemy musieli pokonać podczas dalszych prac nad projektem:
+    \begin{itemize}
+      \item Szum z kamery
+      \item Opóźnienia
+      \item Wydajność przy animowaniu wielu elementów twarzy jednocześnie
+      \item Łączenie landmarkóœ na niestandardowych awatarach
+    \end{itemize}
   \end{frame}
 \section{Podsumowanie}
   \begin{frame}
-    placeholder
+    \begin{block}{Temat projektu}
+      \begin{itemize}
+        \item \textbf{Cel}: Generowanie i animowanie awatara 3D w czasie rzeczywistym na podstawie obrazu z pojedyńczej kamery 2D
+        \item \textbf{Ekstrakcja cech}: Wykorzystanie frameworka MediaPipe do analizy cech twarzy
+        \item \textbf{Renderowanie awatara}: Aplikacja OpenGL wykorzystująca mesh blending
+      \end{itemize}
+    \end{block}
+    \begin{block}{Aktualne wyzwania i rozwój}
+      \begin{itemize}
+        \item \textbf{Ograniczenia}: Obecny model skupia się na ekspresji twarzy pomijając ruchy głowy, wymaga także tworzenia wielu modeli stanów pośrednich
+        \item \textbf{Plany rozwoju}: Wprowadzenie animacji szkieletowej, śledzenia wzroku oraz deformacji za pomocą control points
+        \item \textbf{Problemy do rozwiązania}: Zapewnienie odpowiedniej wydajności, praca z obrazem niskiej jakości 
+      \end{itemize}
+    \end{block}
   \end{frame}
 \end{document}
