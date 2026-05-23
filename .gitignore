@@ -3,3 +3,4 @@ build/
 *.ini
 *.obj
 *.mtl
+face_landmarker.task
