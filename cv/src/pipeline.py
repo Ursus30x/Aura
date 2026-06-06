@@ -1,12 +1,17 @@
+import os
+# Suppress OpenCV Qt and Wayland warnings on Linux
+os.environ["QT_QPA_PLATFORM"] = "xcb"
+os.environ["OPENCV_LOG_LEVEL"] = "FATAL"
+
 import cv2
 import mediapipe as mp
 import time
-import sys
-import os
 import urllib.request
 import argparse
 import numpy as np
 import math
+import socket
+import json
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
@@ -39,7 +44,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--source', default='0', help='Camera index or path to mp4 file')
     parser.add_argument('--debug', action='store_true', help='Show video window with landmarks for debugging')
+    parser.add_argument('--port', type=int, default=5555, help='UDP port to send data to')
     args = parser.parse_args()
+
+    # UDP Setup
+    udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    target_addr = ("127.0.0.1", args.port)
 
     model_path = download_model()
 
@@ -72,7 +82,7 @@ def main():
     final_ratios = None
     final_color = None
 
-    print(f"Starting pipeline on source: {args.source} | Debug mode: {args.debug}")
+    print(f"Starting pipeline on source: {args.source} | Target UDP: 127.0.0.1:{args.port} | Debug: {args.debug}")
     if args.debug:
         print("Press SPACE to PAUSE/RESUME, 'c' to START CALIBRATION, 'q' to QUIT.")
 
@@ -108,6 +118,16 @@ def main():
                     rotation_matrix = transform_matrix[:3, :3]
                     pitch, yaw, roll = rotation_matrix_to_euler_angles(rotation_matrix)
                     pitch_deg, yaw_deg, roll_deg = map(math.degrees, [pitch, yaw, roll])
+
+                    # UDP BROADCAST (ANIMATION 60Hz)
+                    if not is_calibrating:
+                        anim_payload = {
+                            "type": "animation",
+                            "timestamp": fake_timestamp_ms,
+                            "rotation": {"pitch": pitch_deg, "yaw": yaw_deg, "roll": roll_deg},
+                            "blendshapes": bs_map
+                        }
+                        udp_socket.sendto(json.dumps(anim_payload).encode('utf-8'), target_addr)
 
                     # CALIBRATION LOGIC
                     if is_calibrating:
@@ -170,6 +190,14 @@ def main():
                                 }
                                 final_color = (accumulated_color / calibration_max_frames).astype(int)
                                 
+                                # Send Calibration Packet
+                                cal_payload = {
+                                    "type": "calibration",
+                                    "ratios": final_ratios,
+                                    "skin_color": final_color.tolist()
+                                }
+                                udp_socket.sendto(json.dumps(cal_payload).encode('utf-8'), target_addr)
+
                                 print(f"\n--- CALIBRATION COMPLETE ---")
                                 print("Topography Ratios (MMORPG Level):")
                                 for k, v in final_ratios.items():
