@@ -1,6 +1,8 @@
 cv/face_landmarker.task
 cv/venv/
 cv/src/__pycache__/
+*.mp4
+
 # This .gitignore file should be placed at the root of your Unity project directory
 #
 # Get latest from https://github.com/github/gitignore/blob/main/Unity.gitignore
@@ -87,14 +89,13 @@ crashlytics-build.properties
 InitTestScene*.unity*
 
 # Addressables default ignores, before user customizations
-ServerData
-[Aa]ssets/StreamingAssets/aa*
-[Aa]ssets/AddressableAssetsData/link.xml*
-[Aa]ssets/Addressables_Temp*
+/[Aa]ssets/[Ss]treamingAssets/aa/*
+/[Aa]ssets/[Aa]ddressableAssetsData/link.xml*
+/[Aa]ssets/[Aa]ddressables_Temp*
 # By default, Addressables content builds will generate addressables_content_state.bin
 # files in platform-specific subfolders, for example:
 # /Assets/AddressableAssetsData/OSX/addressables_content_state.bin
-[Aa]ssets/AddressableAssetsData/*/*.bin*
+/[Aa]ssets/[Aa]ddressableAssetsData/*/*.bin*
 
 # Visual Scripting auto-generated files
 [Aa]ssets/Unity.VisualScripting.Generated/VisualScripting.Flow/UnitOptions.db
