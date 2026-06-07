@@ -1,6 +1,3 @@
-.vscode
-build/
-*.ini
-*.obj
-*.mtl
-face_landmarker.task
+cv/face_landmarker.task
+cv/venv/
+cv/src/__pycache__/
