@@ -45,6 +45,7 @@ def main():
     parser.add_argument('--source', default='0', help='Camera index or path to mp4 file')
     parser.add_argument('--debug', action='store_true', help='Show video window with landmarks for debugging')
     parser.add_argument('--port', type=int, default=5555, help='UDP port to send data to')
+    parser.add_argument('--fps', type=float, default=0.0, help='Force source FPS (overrides video metadata). Use when the container reports the wrong rate, e.g. 60 for a 30fps clip.')
     args = parser.parse_args()
 
     # UDP Setup
@@ -70,8 +71,25 @@ def main():
         print(f"Error: Cannot open source {args.source}")
         return
 
+    # Pobieranie Hz z metadanych pliku wideo
+    source_fps = cap.get(cv2.CAP_PROP_FPS) if is_video_file else 0.0
+    if is_video_file and args.fps > 0:
+        # Manual override: trust the user over the (often wrong) container metadata.
+        print(f"Override: forcing source FPS to {args.fps:.3f} (metadata reported {source_fps:.3f}).")
+        source_fps = args.fps
+    elif is_video_file and (not source_fps or source_fps <= 0 or math.isnan(source_fps)):
+        source_fps = 30.0
+        print(f"Warning: source FPS missing from metadata, assuming {source_fps:.0f} fps.")
+    
+    frame_interval = (1.0 / source_fps) if (is_video_file and source_fps > 0) else 0.0
+    if is_video_file:
+        print(f"Source frame rate: {source_fps:.3f} fps (frame interval {frame_interval * 1000:.2f} ms).")
+    
+    video_frame_index = 0
+    mp_timestamp_index = 0
     frames_processed = 0
     total_time = 0.0
+    stats_wall_start = time.time()
 
     # Calibration State
     is_calibrating = False
@@ -89,6 +107,7 @@ def main():
     with vision.FaceLandmarker.create_from_options(options) as landmarker:
         is_paused = False
         while True:
+            # Zaczynamy mierzyć czas DOKŁADNIE na początku klatki
             start_time = time.time()
 
             if not is_paused:
@@ -96,15 +115,26 @@ def main():
                 if not success:
                     if is_video_file:
                         cap.set(cv2.CAP_PROP_POS_FRAMES, 0) # Loop video
+                        video_frame_index = 0
                         continue
                     else:
                         break
 
+                # Prawidłowy timestamp oparty na klatkach (wymagane przez MediaPipe).
+                # MediaPipe wymaga MONOTONICZNIE rosnącego timestampu, więc używamy osobnego licznika,
+                # który NIE resetuje się przy zapętleniu wideo (video_frame_index resetuje do 0 i cofałby czas).
+                video_time_s = (video_frame_index * frame_interval) if frame_interval > 0 else 0.0
+
                 frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=frame_rgb)
                 
-                # Mediapipe requires strictly increasing timestamps for VIDEO mode.
-                fake_timestamp_ms = int(time.time() * 1000)
+                if frame_interval > 0:
+                    fake_timestamp_ms = int(mp_timestamp_index * frame_interval * 1000)
+                else:
+                    fake_timestamp_ms = int(time.time() * 1000)
+
+                video_frame_index += 1
+                mp_timestamp_index += 1
 
                 result = landmarker.detect_for_video(mp_image, fake_timestamp_ms)
                 
@@ -119,7 +149,7 @@ def main():
                     pitch, yaw, roll = rotation_matrix_to_euler_angles(rotation_matrix)
                     pitch_deg, yaw_deg, roll_deg = map(math.degrees, [pitch, yaw, roll])
 
-                    # UDP BROADCAST (ANIMATION 60Hz)
+                    # UDP BROADCAST
                     if not is_calibrating:
                         anim_payload = {
                             "type": "animation",
@@ -133,11 +163,9 @@ def main():
                     if is_calibrating:
                         def dist(i1, i2): return calculate_distance(landmarks[i1], landmarks[i2])
                         
-                        # Anchor: Full Face Height (Forehead 10 to Chin 152)
                         anchor_dist = dist(10, 152)
                         
                         if anchor_dist > 0.001:
-                            # Advanced MMORPG-level topography features
                             ratios = {
                                 'eye_width_L': dist(33, 133) / anchor_dist,
                                 'eye_width_R': dist(362, 263) / anchor_dist,
@@ -163,9 +191,7 @@ def main():
                             for k, v in ratios.items():
                                 accumulated_ratios[k] += v
 
-                            # Skin Color Extraction
                             h, w, _ = frame_rgb.shape
-                            # Forehead(151), Left Cheek(117), Right Cheek(346)
                             color_points = [151, 117, 346]
                             frame_color = np.array([0.0, 0.0, 0.0])
                             pts_sampled = 0
@@ -174,7 +200,6 @@ def main():
                                 lx = int(landmarks[idx].x * w)
                                 ly = int(landmarks[idx].y * h)
                                 if 0 <= lx < w and 0 <= ly < h:
-                                    # Get RGB value
                                     frame_color += frame_rgb[ly, lx]
                                     pts_sampled += 1
                                     
@@ -190,7 +215,6 @@ def main():
                                 }
                                 final_color = (accumulated_color / calibration_max_frames).astype(int)
                                 
-                                # Send Calibration Packet
                                 cal_payload = {
                                     "type": "calibration",
                                     "ratios": final_ratios,
@@ -211,7 +235,6 @@ def main():
                             lm = landmarks[idx]
                             cv2.circle(frame, (int(lm.x * w), int(lm.y * h)), 2, (0, 255, 0), -1)
                         
-                        # Draw color sample points
                         for idx in [151, 117, 346]:
                             lm = landmarks[idx]
                             cv2.circle(frame, (int(lm.x * w), int(lm.y * h)), 3, (255, 0, 0), -1)
@@ -219,13 +242,11 @@ def main():
                         y_pos = 30
                         cv2.putText(frame, f"Pitch: {pitch_deg:.1f} Yaw: {yaw_deg:.1f} Roll: {roll_deg:.1f}", (20, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 255), 2)
                         
-                        # Draw Calibration status
                         if is_calibrating:
                             progress = int((calibration_frames / calibration_max_frames) * 100)
                             cv2.putText(frame, f"CALIBRATING: {progress}%", (300, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 0, 255), 2)
                         elif final_ratios:
                             cv2.putText(frame, f"CALIBRATED", (300, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
-                            # Draw color swatch
                             color_bgr = (int(final_color[2]), int(final_color[1]), int(final_color[0]))
                             cv2.rectangle(frame, (450, 10), (490, 50), color_bgr, -1)
                             cv2.rectangle(frame, (450, 10), (490, 50), (255, 255, 255), 1)
@@ -243,13 +264,27 @@ def main():
                             color = (0, 255, 0) if val > 0.1 else (200, 200, 200)
                             cv2.putText(frame, f"{shape_name}: {val:.2f}", (x_pos, y_pos), cv2.FONT_HERSHEY_SIMPLEX, 0.35, color, 1)
 
+            # --- NOWA LOGIKA SYNCHRONIZACJI WIDEO DO ORYGINALNEGO FPS ---
+            process_time = time.time() - start_time
+            wait_time_ms = 1  # Domyślny, minimalny narzut czasu (1 ms)
+
+            # Obliczanie ile trzeba odczekać (tylko gdy odtwarzamy z pliku wideo i klatka się załadowała)
+            if not is_paused and is_video_file and frame_interval > 0:
+                remaining_time = frame_interval - process_time
+                if remaining_time > 0:
+                    wait_time_ms = int(remaining_time * 1000)
+                    if wait_time_ms <= 0:
+                        wait_time_ms = 1
+
             if args.debug:
                 display_frame = frame.copy() if frame is not None else np.zeros((480, 640, 3), dtype=np.uint8)
                 if is_paused:
                     cv2.putText(display_frame, "PAUSED", (20, 280), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 0, 255), 2)
                 
                 cv2.imshow("Debug - Headless Pipeline", display_frame)
-                key = cv2.waitKey(1) & 0xFF
+                
+                # Używamy wyliczonego czasu jako argumentu opóźnienia w OpenCV
+                key = cv2.waitKey(wait_time_ms) & 0xFF
                 if key == ord('q'):
                     break
                 elif key == ord(' '):
@@ -260,19 +295,28 @@ def main():
                     calibration_frames = 0
                     accumulated_ratios = {}
                     accumulated_color = np.array([0.0, 0.0, 0.0])
+            else:
+                # W trybie "headless" używamy time.sleep do wstrzymania pętli
+                if wait_time_ms > 1:
+                    time.sleep(wait_time_ms / 1000.0)
 
+            # Statystyki wydajności
             if not is_paused:
-                process_time = (time.time() - start_time) * 1000
-                total_time += process_time
+                process_time_ms = process_time * 1000
+                total_time += process_time_ms
                 frames_processed += 1
 
                 if frames_processed % 60 == 0:
                     avg_time = total_time / 60
-                    fps = 1000.0 / avg_time if avg_time > 0 else 0
-                    if not args.debug and not is_calibrating:
-                        print(f"[Stats] Frames: {frames_processed} | Avg processing time: {avg_time:.2f}ms | FPS: {fps:.1f}")
+                    inference_fps = 1000.0 / avg_time if avg_time > 0 else 0
+                    now = time.time()
+                    wall_elapsed = now - stats_wall_start
+                    effective_fps = 60.0 / wall_elapsed if wall_elapsed > 0 else 0
+                    target_str = f" | Target: {source_fps:.1f}" if (is_video_file and source_fps > 0) else ""
+                    print(f"[Stats] Frames: {frames_processed} | Inference: {avg_time:.2f}ms ({inference_fps:.1f} fps) | Effective: {effective_fps:.1f} fps{target_str}")
                     total_time = 0.0
-                
+                    stats_wall_start = now
+
         if args.debug:
             cv2.destroyAllWindows()
 
