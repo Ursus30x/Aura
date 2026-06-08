@@ -93,6 +93,9 @@ public class DirectBoneController : MonoBehaviour
     private int neckHash = 0;
     private Quaternion restNeckRot = Quaternion.identity;
     private Quaternion smoothedNeckRot = Quaternion.identity;
+    private float lastPacketTime = -1f;
+    [Tooltip("If no tracking data arrives for this many seconds, the avatar will slowly return to a neutral rest pose.")]
+    public float trackingTimeout = 0.5f;
 
     void Start()
     {
@@ -162,8 +165,29 @@ public class DirectBoneController : MonoBehaviour
         ForceAnimationOverride();
 
         if (json.Contains("\"type\": \"animation\"")) {
+            lastPacketTime = Time.time;
             var packet = JsonUtility.FromJson<AnimationPacket>(json);
-            currentRotation = packet.rotation;
+            
+            // JUMP FILTER / OUTLIER REJECTION
+            // Prevent violent snapping when MediaPipe regains tracking after >90 deg rotation,
+            // or when it feeds glitchy data right before losing tracking.
+            if (currentRotation != null) {
+                float pitchJump = Mathf.Abs(Mathf.DeltaAngle(currentRotation.pitch, packet.rotation.pitch));
+                float yawJump   = Mathf.Abs(Mathf.DeltaAngle(currentRotation.yaw, packet.rotation.yaw));
+                float rollJump  = Mathf.Abs(Mathf.DeltaAngle(currentRotation.roll, packet.rotation.roll));
+                
+                // If the jump is physically impossible for a 1-frame difference (>40 degrees),
+                // we reject the raw packet and force a smooth Lerp to catch up safely.
+                if (pitchJump > 40f || yawJump > 40f || rollJump > 40f) {
+                    currentRotation.pitch = Mathf.LerpAngle(currentRotation.pitch, packet.rotation.pitch, 0.1f);
+                    currentRotation.yaw   = Mathf.LerpAngle(currentRotation.yaw, packet.rotation.yaw, 0.1f);
+                    currentRotation.roll  = Mathf.LerpAngle(currentRotation.roll, packet.rotation.roll, 0.1f);
+                } else {
+                    currentRotation = packet.rotation;
+                }
+            } else {
+                currentRotation = packet.rotation;
+            }
 
             if (expressionPlayer != null) {
                 expressionPlayer.processing = true;
@@ -340,13 +364,29 @@ public class DirectBoneController : MonoBehaviour
     {
         if (!initialized || umaData == null || !applyRotation) return;
 
+        // TRACKING LOSS RECOVERY
+        // If we haven't received a packet recently (e.g., user turned completely away),
+        // gracefully return the head to the neutral rest pose instead of freezing.
+        if (lastPacketTime > 0 && Time.time - lastPacketTime > trackingTimeout) {
+            float decaySpeed = Time.deltaTime * 3f; // Return to center slowly
+            currentRotation.pitch = Mathf.Lerp(currentRotation.pitch, 0f, decaySpeed);
+            currentRotation.yaw = Mathf.Lerp(currentRotation.yaw, 0f, decaySpeed);
+            currentRotation.roll = Mathf.Lerp(currentRotation.roll, 0f, decaySpeed);
+        }
+
         if (headHash != 0) {
             // Apply tracked head pose as a clamped delta on top of the rig's rest pose,
             // then smooth toward it so noise spikes don't snap the head around.
             // UMA 3 Update: Axes are no longer swapped. Map pitch to X (pitch) and yaw to Y (yaw).
-            float pitch = Mathf.Clamp(currentRotation.pitch * rotationSensitivity.x + rotationOffset.x, -maxAngle.x, maxAngle.x);
-            float yaw   = Mathf.Clamp(-currentRotation.yaw  * rotationSensitivity.y + rotationOffset.y, -maxAngle.y, maxAngle.y);
-            float roll  = Mathf.Clamp(-currentRotation.roll * rotationSensitivity.z + rotationOffset.z, -maxAngle.z, maxAngle.z);
+            
+            // Normalize angles to avoid -180/180 jump glitches during fast movements (Gimbal lock / Wrap-around)
+            float normPitch = Mathf.DeltaAngle(0, currentRotation.pitch);
+            float normYaw   = Mathf.DeltaAngle(0, -currentRotation.yaw);
+            float normRoll  = Mathf.DeltaAngle(0, -currentRotation.roll);
+
+            float pitch = Mathf.Clamp(normPitch * rotationSensitivity.x + rotationOffset.x, -maxAngle.x, maxAngle.x);
+            float yaw   = Mathf.Clamp(normYaw   * rotationSensitivity.y + rotationOffset.y, -maxAngle.y, maxAngle.y);
+            float roll  = Mathf.Clamp(normRoll  * rotationSensitivity.z + rotationOffset.z, -maxAngle.z, maxAngle.z);
 
             // Split the rotation: the neck carries a fraction, the head carries the remainder,
             // so the whole upper body reads as a natural turn instead of just the head pivoting.

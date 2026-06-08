@@ -24,18 +24,12 @@ def download_model():
     return filename
 
 def rotation_matrix_to_euler_angles(R):
-    sy = math.sqrt(R[0,0] * R[0,0] +  R[1,0] * R[1,0])
-    singular = sy < 1e-6
-    if not singular:
-        x = math.atan2(R[2,1] , R[2,2])
-        y = math.atan2(-R[2,0], sy)
-        z = math.atan2(R[1,0], R[0,0])
-    else:
-        x = math.atan2(-R[1,2], R[1,1])
-        y = math.atan2(-R[2,0], sy)
-        z = 0
+    # OpenCV robust decomposition prevents edge-case singularity flips during fast motion
+    euler, _, _, _, _, _ = cv2.RQDecomp3x3(R)
+    pitch, yaw, roll = euler
+    
     # Returns pitch, yaw, roll in radians
-    return np.array([x, y, z])
+    return np.array([math.radians(pitch), math.radians(yaw), math.radians(roll)])
 
 def calculate_distance(lm1, lm2):
     return math.sqrt((lm1.x - lm2.x)**2 + (lm1.y - lm2.y)**2 + (lm1.z - lm2.z)**2)
