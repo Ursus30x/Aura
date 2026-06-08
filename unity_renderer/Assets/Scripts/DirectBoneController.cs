@@ -67,8 +67,8 @@ public class DirectBoneController : MonoBehaviour
     [Range(1f, 3f)] public float expressionCurve = 1.6f;
     [Tooltip("Snappiness of expression smoothing. Higher = sharper, more alive; lower = softer.")]
     public float expressionLerpSpeed = 0f;
-    [Tooltip("Separate gain for eye open/close. Lower than expressionGain so the avatar doesn't squint/over-blink.")]
-    [Range(0f, 2f)] public float eyeGain = 0.7f;
+    [Tooltip("Separate gain for eye open/close. Increased to make blinking and squinting more responsive.")]
+    [Range(0f, 3f)] public float eyeGain = 1.5f;
 
     [Header("Neck")]
     [Tooltip("Drive the neck bone with a fraction of the head rotation for a natural look (0 = head only).")]
@@ -187,18 +187,36 @@ public class DirectBoneController : MonoBehaviour
                 // otherwise the rest pose sits at -1 (clenched) and the mouth barely opens.
                 float Uni(string key, float gain = 1f) => Mathf.Clamp(GetJsonFloat(json, key) * gain, 0f, 1f);
 
-                // SZCZĘKA (Jaw) — przywrócona działająca formuła (BEZ baseline — to psuło ruch).
-                // Normalizuj surowy jawOpen do 0..1, potem napędzaj jawOpen_Close. jawOpenSign odwraca kierunek
-                // jeśli rig zaciska zamiast otwierać (SZCZĘKOŚCISK = znak odwrotny → ustaw jawOpenSign na -1).
-                float jawNorm = Mathf.Clamp01(GetJsonFloat(json, "jawOpen") * jawOpenGain / Mathf.Max(0.01f, jawOpenInputMax));
-                expressionPlayer.jawOpen_Close = Mathf.Lerp(expressionPlayer.jawOpen_Close, Mathf.Clamp(jawNorm * jawOpenRange * jawOpenSign, -1f, 1f), dtLerp);
+                // SZCZĘKA (Jaw)
+                // Normalize jawOpen to 0..1, then drive jawOpen_Close.
+                // Reintroducing jawOpenBaseline (Deadzone): MediaPipe rarely drops to absolute 0.0 when mouth is closed.
+                // We subtract the baseline, so values below it clamp to 0 (mouth firmly shut).
+                float rawJaw = GetJsonFloat(json, "jawOpen");
+                float adjustedJaw = Mathf.Max(0f, rawJaw - jawOpenBaseline);
+                float jawNorm = Mathf.Clamp01(adjustedJaw * jawOpenGain / Mathf.Max(0.01f, jawOpenInputMax));
+                
+                // If jawNorm is basically 0, we can slightly force it to negative (clenched) to ensure teeth are hidden.
+                float finalJawVal = jawNorm * jawOpenRange * jawOpenSign;
+                if (jawNorm < 0.05f) {
+                    finalJawVal -= 0.15f * jawOpenSign; // Slight clench
+                }
+                
+                expressionPlayer.jawOpen_Close = Mathf.Lerp(expressionPlayer.jawOpen_Close, Mathf.Clamp(finalJawVal, -1f, 1f), dtLerp);
                 expressionPlayer.jawForward_Back = Mathf.Lerp(expressionPlayer.jawForward_Back, Uni("jawForward"), dtLerp);
                 expressionPlayer.jawLeft_Right = Mathf.Lerp(expressionPlayer.jawLeft_Right, Pair("jawRight", "jawLeft"), dtLerp);
 
                 // OCZY (Eyes)
-                // Eyes use a gentler gain than the rest so the avatar doesn't squint/over-blink.
-                expressionPlayer.leftEyeOpen_Close = Mathf.Lerp(expressionPlayer.leftEyeOpen_Close, Mathf.Clamp(Pair("eyeWideLeft", "eyeBlinkLeft") * eyeGain, -1f, 1f), dtLerp);
-                expressionPlayer.rightEyeOpen_Close = Mathf.Lerp(expressionPlayer.rightEyeOpen_Close, Mathf.Clamp(Pair("eyeWideRight", "eyeBlinkRight") * eyeGain, -1f, 1f), dtLerp);
+                // Eyes use a gentler gain, but now incorporate squint blendshapes from MediaPipe
+                float lSquint = GetJsonFloat(json, "eyeSquintLeft");
+                float rSquint = GetJsonFloat(json, "eyeSquintRight");
+                float lBlink = GetJsonFloat(json, "eyeBlinkLeft");
+                float rBlink = GetJsonFloat(json, "eyeBlinkRight");
+                float lWide = GetJsonFloat(json, "eyeWideLeft");
+                float rWide = GetJsonFloat(json, "eyeWideRight");
+
+                // Combine blink and squint for closing, wide for opening.
+                expressionPlayer.leftEyeOpen_Close = Mathf.Lerp(expressionPlayer.leftEyeOpen_Close, Mathf.Clamp((lWide - Mathf.Max(lBlink, lSquint)) * eyeGain, -1f, 1f), dtLerp);
+                expressionPlayer.rightEyeOpen_Close = Mathf.Lerp(expressionPlayer.rightEyeOpen_Close, Mathf.Clamp((rWide - Mathf.Max(rBlink, rSquint)) * eyeGain, -1f, 1f), dtLerp);
                 expressionPlayer.leftEyeUp_Down = Mathf.Lerp(expressionPlayer.leftEyeUp_Down, Pair("eyeLookUpLeft", "eyeLookDownLeft"), dtLerp);
                 expressionPlayer.rightEyeUp_Down = Mathf.Lerp(expressionPlayer.rightEyeUp_Down, Pair("eyeLookUpRight", "eyeLookDownRight"), dtLerp);
                 expressionPlayer.leftEyeIn_Out = Mathf.Lerp(expressionPlayer.leftEyeIn_Out, Pair("eyeLookInLeft", "eyeLookOutLeft"), dtLerp);
@@ -218,10 +236,14 @@ public class DirectBoneController : MonoBehaviour
                 // za kością szczęki: dolna warga w dół, górna w górę, LINIOWO z jawNorm (bez krzywej = bez uncanny).
                 // jawGapeSign odwraca kierunek jeśli rig pcha wargi nie w tę stronę.
                 float gape = jawNorm * jawGapeBoost * jawGapeSign;
-                expressionPlayer.leftLowerLipUp_Down = Mathf.Lerp(expressionPlayer.leftLowerLipUp_Down, Mathf.Clamp(Pair("mouthShrugLower", "mouthLowerDownLeft") - gape, -1f, 1f), dtLerp);
-                expressionPlayer.rightLowerLipUp_Down = Mathf.Lerp(expressionPlayer.rightLowerLipUp_Down, Mathf.Clamp(Pair("mouthShrugLower", "mouthLowerDownRight") - gape, -1f, 1f), dtLerp);
-                expressionPlayer.leftUpperLipUp_Down = Mathf.Lerp(expressionPlayer.leftUpperLipUp_Down, Mathf.Clamp(Uni("mouthUpperUpLeft") + gape, -1f, 1f), dtLerp);
-                expressionPlayer.rightUpperLipUp_Down = Mathf.Lerp(expressionPlayer.rightUpperLipUp_Down, Mathf.Clamp(Uni("mouthUpperUpRight") + gape, -1f, 1f), dtLerp);
+                
+                // MOUTH SEAL HACK: If jaw is closed, force lips to stay together. MediaPipe noise often parts them.
+                float lipSeal = (jawNorm < 0.05f) ? 0.0f : 1.0f; // Kill lip-parting expressions completely if jaw is shut.
+
+                expressionPlayer.leftLowerLipUp_Down = Mathf.Lerp(expressionPlayer.leftLowerLipUp_Down, Mathf.Clamp((Pair("mouthShrugLower", "mouthLowerDownLeft") * lipSeal) - gape, -1f, 1f), dtLerp);
+                expressionPlayer.rightLowerLipUp_Down = Mathf.Lerp(expressionPlayer.rightLowerLipUp_Down, Mathf.Clamp((Pair("mouthShrugLower", "mouthLowerDownRight") * lipSeal) - gape, -1f, 1f), dtLerp);
+                expressionPlayer.leftUpperLipUp_Down = Mathf.Lerp(expressionPlayer.leftUpperLipUp_Down, Mathf.Clamp((Uni("mouthUpperUpLeft") * lipSeal) + gape, -1f, 1f), dtLerp);
+                expressionPlayer.rightUpperLipUp_Down = Mathf.Lerp(expressionPlayer.rightUpperLipUp_Down, Mathf.Clamp((Uni("mouthUpperUpRight") * lipSeal) + gape, -1f, 1f), dtLerp);
 
                 // BRWI (Brows)
                 expressionPlayer.browsIn = Mathf.Lerp(expressionPlayer.browsIn, Ex((GetJsonFloat(json, "browDownLeft") + GetJsonFloat(json, "browDownRight")) / 2f), dtLerp);
@@ -321,9 +343,9 @@ public class DirectBoneController : MonoBehaviour
         if (headHash != 0) {
             // Apply tracked head pose as a clamped delta on top of the rig's rest pose,
             // then smooth toward it so noise spikes don't snap the head around.
-            // Source pitch/yaw are swapped relative to UMA's bone axes, so map yaw->X(pitch) and pitch->Y(yaw).
-            float pitch = Mathf.Clamp(currentRotation.yaw   * rotationSensitivity.x + rotationOffset.x, -maxAngle.x, maxAngle.x);
-            float yaw   = Mathf.Clamp(currentRotation.pitch * rotationSensitivity.y + rotationOffset.y, -maxAngle.y, maxAngle.y);
+            // UMA 3 Update: Axes are no longer swapped. Map pitch to X (pitch) and yaw to Y (yaw).
+            float pitch = Mathf.Clamp(currentRotation.pitch * rotationSensitivity.x + rotationOffset.x, -maxAngle.x, maxAngle.x);
+            float yaw   = Mathf.Clamp(-currentRotation.yaw  * rotationSensitivity.y + rotationOffset.y, -maxAngle.y, maxAngle.y);
             float roll  = Mathf.Clamp(-currentRotation.roll * rotationSensitivity.z + rotationOffset.z, -maxAngle.z, maxAngle.z);
 
             // Split the rotation: the neck carries a fraction, the head carries the remainder,

@@ -6,6 +6,7 @@ import json
 import socket
 import argparse
 import math
+import colorsys
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
 
@@ -63,9 +64,9 @@ class MultiViewCalibrator:
             'cheekPosition': (0.6, 1.0),
             'lowCheekPronounced': (0.3, 0.7),
             'foreheadSize': (0.3, 0.6),
-            'lipsSize': (0.1, 0.3),
+            'lipsSize': (0.1, 0.4),   # Widen range so standard lips map closer to 0.5 (prevents huge upper lip)
             'mouthSize': (0.4, 0.8),
-            'eyeSize': (0.04, 0.1),
+            'eyeSize': (0.05, 0.15),  # Lowered min/max to prevent huge eye sockets (raw is usually ~0.06)
             'eyeSpacing': (0.35, 0.6),
         }
 
@@ -173,11 +174,48 @@ class MultiViewCalibrator:
 
     def extract_skin_color(self, img_rgb, landmarks):
         h, w, _ = img_rgb.shape
+        # Points: Forehead center, Left Cheek, Right Cheek
+        color_points = [151, 117, 346]
         samples = []
-        for idx in [151, 117, 346]:
+        
+        for idx in color_points:
             lx, ly = int(landmarks[idx].x * w), int(landmarks[idx].y * h)
-            if 0 <= lx < w and 0 <= ly < h: samples.append(img_rgb[ly, lx])
-        return np.mean(samples, axis=0) if samples else [200, 180, 160]
+            # Sample a 5x5 patch instead of a single pixel to reduce noise
+            patch_size = 2
+            for dy in range(-patch_size, patch_size + 1):
+                for dx in range(-patch_size, patch_size + 1):
+                    px, py = lx + dx, ly + dy
+                    if 0 <= px < w and 0 <= py < h:
+                        px_color = img_rgb[py, px].astype(float)
+                        samples.append(px_color)
+                        
+        if not samples:
+            return [200, 180, 160]
+            
+        avg_color = np.mean(samples, axis=0)
+        
+        # Proper Color Correction using HSV
+        # 1. Normalize RGB to 0.0 - 1.0 for colorsys
+        r_norm, g_norm, b_norm = avg_color[0]/255.0, avg_color[1]/255.0, avg_color[2]/255.0
+        
+        # 2. Convert to HSV (Hue, Saturation, Value)
+        hue, sat, val = colorsys.rgb_to_hsv(r_norm, g_norm, b_norm)
+        
+        # 3. Aggressive anti-orange/red correction
+        # UMA adds its own warmth/Subsurface Scattering. We must provide a very desaturated, pale base.
+        sat = min(sat, 0.25)  # Hard clamp saturation (0.25 is quite pale)
+        
+        # Shift hue to a neutral yellowish-beige to counteract UMA's internal red SSS
+        # Orange/Red is typically hue 0.0 to 0.1.
+        if hue < 0.1 or hue > 0.9:
+            hue = 0.12 # Cooler, yellowish beige
+        
+        val = min(1.0, val * 1.3) # Boost brightness further
+        
+        # 4. Convert back to RGB
+        r_new, g_new, b_new = colorsys.hsv_to_rgb(hue, sat, val)
+        
+        return [int(r_new * 255), int(g_new * 255), int(b_new * 255)]
 
     def aggregate_results(self, results):
         merged_raw = {}
@@ -195,7 +233,14 @@ class MultiViewCalibrator:
             if k in self.ranges:
                 r_min, r_max = self.ranges[k]
                 t = (v - r_min) / (r_max - r_min) if r_max != r_min else 0.5
-                dna[k] = np.clip(0.5 + (t - 0.5) * self.sensitivity, 0.0, 1.0)
+                
+                current_sensitivity = self.sensitivity
+                if k == 'eyeSize':
+                    current_sensitivity = 0.3  # Silne tłumienie, żeby oczodoły nie rosły jak u kosmity
+                elif k == 'lipsSize':
+                    current_sensitivity = 0.3  # Tłumienie wargi, by nie właziła na nos
+                    
+                dna[k] = np.clip(0.5 + (t - 0.5) * current_sensitivity, 0.0, 1.0)
         dna['headSize'] = 0.5
         dna['height'] = 0.5
         return dna
