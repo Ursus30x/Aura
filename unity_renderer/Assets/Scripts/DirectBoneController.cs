@@ -4,7 +4,6 @@ using UMA.CharacterSystem;
 using UMA.PoseTools;
 using System;
 using System.Globalization;
-using System.Collections;
 
 [Serializable]
 public class RotationData {
@@ -138,7 +137,6 @@ public class DirectBoneController : MonoBehaviour
         initialized = true;
     }
 
-
     void Update()
     {
         if (!initialized || udpReceiver == null) return;
@@ -150,14 +148,18 @@ public class DirectBoneController : MonoBehaviour
         }
     }
 
-    private void ProcessPacket(string json)
+    private void ForceAnimationOverride()
     {
-        // Force override to ensure proper animation
         expressionPlayer.overrideMecanimJaw = true;
         expressionPlayer.overrideMecanimNeck = true;
         expressionPlayer.overrideMecanimHead = true;
         expressionPlayer.overrideMecanimEyes = true;
         expressionPlayer.overrideMecanimHands = true;
+    }
+
+    private void ProcessPacket(string json)
+    {
+        ForceAnimationOverride();
 
         if (json.Contains("\"type\": \"animation\"")) {
             var packet = JsonUtility.FromJson<AnimationPacket>(json);

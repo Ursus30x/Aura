@@ -1,6 +1,5 @@
 {
   "dependencies": {
-    "com.uma.core": "https://github.com/umasteeringgroup/UMA.git?path=UMAProject/Assets/UMA#V2.14RC0",
     "com.unity.ai.navigation": "2.0.12",
     "com.unity.collab-proxy": "2.12.4",
     "com.unity.ide.rider": "3.0.40",
