@@ -52,6 +52,17 @@ def main():
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     target_addr = ("127.0.0.1", args.port)
 
+    # AUTO-LOAD CALIBRATION
+    cal_file = "calibration_result.json"
+    if os.path.exists(cal_file):
+        try:
+            with open(cal_file, "r") as f:
+                cal_data = json.load(f)
+                udp_socket.sendto(json.dumps(cal_data).encode('utf-8'), target_addr)
+                print(f"Applied saved calibration from {cal_file}")
+        except Exception as e:
+            print(f"Warning: Failed to load calibration: {e}")
+
     model_path = download_model()
 
     base_options = python.BaseOptions(model_asset_path=model_path)
@@ -163,35 +174,96 @@ def main():
                     if is_calibrating:
                         def dist(i1, i2): return calculate_distance(landmarks[i1], landmarks[i2])
                         
-                        anchor_dist = dist(10, 152)
+                        # Use face height as anchor (Forehead 10 to Chin 152)
+                        face_height = dist(10, 152)
                         
-                        if anchor_dist > 0.001:
-                            ratios = {
-                                'eye_width_L': dist(33, 133) / anchor_dist,
-                                'eye_width_R': dist(362, 263) / anchor_dist,
-                                'eye_height_L': dist(159, 145) / anchor_dist,
-                                'eye_height_R': dist(386, 374) / anchor_dist,
-                                'inter_eye_dist': dist(133, 362) / anchor_dist,
-                                'brow_height_L': dist(52, 159) / anchor_dist,
-                                'brow_height_R': dist(282, 386) / anchor_dist,
-                                'nose_length': dist(8, 2) / anchor_dist,
-                                'nose_width': dist(129, 358) / anchor_dist,
-                                'mouth_width': dist(61, 291) / anchor_dist,
-                                'lip_thickness_top': dist(0, 13) / anchor_dist,
-                                'lip_thickness_bottom': dist(14, 17) / anchor_dist,
-                                'philtrum_length': dist(2, 0) / anchor_dist,
-                                'chin_length': dist(17, 152) / anchor_dist,
-                                'jaw_width': dist(234, 454) / anchor_dist,
-                                'cheek_width': dist(132, 361) / anchor_dist
+                        if face_height > 0.001:
+                            # Raw ratios relative to face height
+                            raw = {
+                                'headWidth': dist(234, 454) / face_height,
+                                'neckThickness': dist(132, 361) / face_height,
+                                'noseWidth': dist(129, 358) / face_height,
+                                'noseSize': (dist(168, 1) * dist(129, 358)) / (face_height**2),
+                                'nosePosition': dist(168, 1) / face_height,
+                                'nosePronounced': (landmarks[168].z - landmarks[1].z),
+                                'noseFlatten': (landmarks[1].z - landmarks[168].z),
+                                'chinSize': dist(17, 152) / face_height,
+                                'chinPronounced': (landmarks[1].z - landmarks[152].z),
+                                'chinPosition': dist(1, 152) / face_height,
+                                'mandibleSize': dist(132, 361) / face_height,
+                                'jawsSize': dist(172, 397) / face_height,
+                                'jawsPosition': dist(1, 152) / face_height,
+                                'cheekSize': dist(116, 345) / face_height,
+                                'cheekPosition': dist(168, 116) / face_height,
+                                'lowCheekPronounced': (landmarks[168].z - landmarks[116].z),
+                                'lowCheekPosition': dist(1, 116) / face_height,
+                                'foreheadSize': dist(10, 168) / face_height,
+                                'lipsSize': dist(0, 17) / face_height,
+                                'mouthSize': dist(61, 291) / face_height,
+                                'eyeSize': (dist(159, 145) + dist(386, 374)) / (2 * face_height),
+                                'eyeSpacing': dist(133, 362) / face_height,
                             }
+
+                            # Baselines for neutral 0.5
+                            baselines = {
+                                'headWidth': 0.75,
+                                'neckThickness': 0.55,
+                                'noseWidth': 0.18,
+                                'noseSize': 0.05,
+                                'nosePosition': 0.25,
+                                'nosePronounced': 0.05,
+                                'noseFlatten': -0.05,
+                                'chinSize': 0.12,
+                                'chinPronounced': 0.02,
+                                'chinPosition': 0.35,
+                                'mandibleSize': 0.55,
+                                'jawsSize': 0.65,
+                                'jawsPosition': 0.35,
+                                'cheekSize': 0.70,
+                                'cheekPosition': 0.20,
+                                'lowCheekPronounced': 0.02,
+                                'lowCheekPosition': 0.15,
+                                'foreheadSize': 0.25,
+                                'lipsSize': 0.08,
+                                'mouthSize': 0.35,
+                                'eyeSize': 0.06,
+                                'eyeSpacing': 0.28,
+                            }
+
+                            dna_params = {}
+                            # SENSITIVITY: 1.0 = full mapping, 0.2 = very subtle changes.
+                            sensitivity = 0.4 
+                            
+                            # Standard parameters
+                            for k, v in raw.items():
+                                base = baselines.get(k, 0.5)
+                                
+                                # Specific dampening for cheeks to avoid "sharp/skeletal" look
+                                current_sensitivity = sensitivity
+                                if 'cheek' in k.lower() or 'Cheek' in k:
+                                    current_sensitivity *= 0.5 # Extra soft for cheeks
+
+                                if 'Pronounced' in k or 'Flatten' in k:
+                                    # Depth is small, use different scaling
+                                    dna_params[k] = np.clip(0.5 + (v - base) * 2.0 * current_sensitivity, 0.0, 1.0)
+                                else:
+                                    # Calculate % deviation from baseline and apply sensitivity
+                                    deviation = (v - base) / base
+                                    dna_params[k] = np.clip(0.5 + (deviation * current_sensitivity), 0.0, 1.0)
+                            
+                            # Reset headSize to neutral 0.5 (safe baseline)
+                            dna_params['headSize'] = 0.5
+                            dna_params['height'] = 0.5 
+
                             
                             if not accumulated_ratios:
-                                accumulated_ratios = {k: 0.0 for k in ratios.keys()}
+                                accumulated_ratios = {k: 0.0 for k in dna_params.keys()}
                                 
-                            for k, v in ratios.items():
+                            for k, v in dna_params.items():
                                 accumulated_ratios[k] += v
 
                             h, w, _ = frame_rgb.shape
+                            # Sample skin color from forehead and cheeks
                             color_points = [151, 117, 346]
                             frame_color = np.array([0.0, 0.0, 0.0])
                             pts_sampled = 0
@@ -210,21 +282,26 @@ def main():
 
                             if calibration_frames >= calibration_max_frames:
                                 is_calibrating = False
-                                final_ratios = {
+                                final_dna = {
                                     k: v / calibration_max_frames for k, v in accumulated_ratios.items()
                                 }
                                 final_color = (accumulated_color / calibration_max_frames).astype(int)
                                 
+                                # Add skin color DNA
+                                final_dna['skinRedness'] = final_color[0] / 255.0
+                                final_dna['skinGreenness'] = final_color[1] / 255.0
+                                final_dna['skinBlueness'] = final_color[2] / 255.0
+
                                 cal_payload = {
                                     "type": "calibration",
-                                    "ratios": final_ratios,
+                                    "dna": final_dna,
                                     "skin_color": final_color.tolist()
                                 }
                                 udp_socket.sendto(json.dumps(cal_payload).encode('utf-8'), target_addr)
 
                                 print(f"\n--- CALIBRATION COMPLETE ---")
-                                print("Topography Ratios (MMORPG Level):")
-                                for k, v in final_ratios.items():
+                                print("UMA DNA Parameters:")
+                                for k, v in final_dna.items():
                                     print(f"  {k:20s}: {v:.4f}")
                                 print(f"\nSkin Color (RGB): {final_color.tolist()}")
                                 print(f"----------------------------\n")

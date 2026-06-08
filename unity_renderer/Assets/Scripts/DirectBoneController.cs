@@ -251,37 +251,67 @@ public class DirectBoneController : MonoBehaviour
 
     private void ApplyCalibration(string json)
     {
-        if (avatar == null) return;
+        Debug.Log("ApplyCalibration: Received packet");
+        if (avatar == null) {
+            Debug.LogError("ApplyCalibration: Avatar is null");
+            return;
+        }
         var dna = avatar.GetDNA();
-        if (dna == null) return;
+        if (dna == null) {
+            Debug.LogError("ApplyCalibration: DNA dictionary is null");
+            return;
+        }
 
-        // Map the CV pipeline's facial topography ratios onto UMA DNA sliders.
-        if (dna.ContainsKey("noseWidth") && json.Contains("nose_width"))
-            dna["noseWidth"].Set(Mathf.Clamp01(GetJsonFloat(json, "nose_width") * noseWidthScale));
-        if (dna.ContainsKey("mouthSize") && json.Contains("mouth_width"))
-            dna["mouthSize"].Set(Mathf.Clamp01(GetJsonFloat(json, "mouth_width") * mouthSizeScale));
-        if (dna.ContainsKey("eyeSpacing") && json.Contains("inter_eye_dist"))
-            dna["eyeSpacing"].Set(Mathf.Clamp01(GetJsonFloat(json, "inter_eye_dist") * eyeSpacingScale));
-
-        // Skin color: "skin_color":[r,g,b] (0-255).
-        const string skinPattern = "\"skin_color\":[";
-        int start = json.IndexOf(skinPattern);
-        if (start != -1) {
-            start += skinPattern.Length;
-            int end = json.IndexOf(']', start);
-            if (end > start) {
-                string[] rgb = json.Substring(start, end - start).Split(',');
-                if (rgb.Length == 3
-                    && int.TryParse(rgb[0].Trim(), out int r)
-                    && int.TryParse(rgb[1].Trim(), out int g)
-                    && int.TryParse(rgb[2].Trim(), out int b)) {
-                    avatar.SetColor("Skin", new Color(r / 255f, g / 255f, b / 255f));
+        // Robust parsing for "dna": { ... }
+        string dnaMarker = "\"dna\"";
+        int dnaIdx = json.IndexOf(dnaMarker);
+        if (dnaIdx != -1) {
+            int startBrace = json.IndexOf('{', dnaIdx);
+            int endBrace = json.IndexOf('}', startBrace);
+            if (startBrace != -1 && endBrace > startBrace) {
+                string dnaContent = json.Substring(startBrace + 1, endBrace - startBrace - 1);
+                string[] pairs = dnaContent.Split(',');
+                foreach (string pair in pairs) {
+                    string[] kv = pair.Split(':');
+                    if (kv.Length == 2) {
+                        string key = kv[0].Trim(' ', '\"', '\n', '\r', '\t');
+                        string valStr = kv[1].Trim(' ', '\"', '\n', '\r', '\t');
+                        if (float.TryParse(valStr, NumberStyles.Float, CultureInfo.InvariantCulture, out float val)) {
+                            if (dna.ContainsKey(key)) {
+                                Debug.Log($"ApplyCalibration: Setting DNA {key} to {val}");
+                                dna[key].Set(Mathf.Clamp01(val));
+                            } else {
+                                // Debug.LogWarning($"ApplyCalibration: DNA key {key} not found in avatar");
+                            }
+                        }
+                    }
                 }
             }
         }
 
-        // Rebuild once to bake the DNA + color changes (calibration is a one-shot packet, not per-frame).
-        avatar.BuildCharacter();
+        // Robust parsing for "skin_color": [r,g,b]
+        string colorMarker = "\"skin_color\"";
+        int colorIdx = json.IndexOf(colorMarker);
+        if (colorIdx != -1) {
+            int startBracket = json.IndexOf('[', colorIdx);
+            int endBracket = json.IndexOf(']', startBracket);
+            if (startBracket != -1 && endBracket > startBracket) {
+                string colorContent = json.Substring(startBracket + 1, endBracket - startBracket - 1);
+                string[] rgb = colorContent.Split(',');
+                if (rgb.Length == 3
+                    && int.TryParse(rgb[0].Trim(), out int r)
+                    && int.TryParse(rgb[1].Trim(), out int g)
+                    && int.TryParse(rgb[2].Trim(), out int b)) {
+                    Debug.Log($"ApplyCalibration: Setting Skin Color to RGB({r},{g},{b})");
+                    avatar.SetColor("Skin", new Color(r / 255f, g / 255f, b / 255f));
+                    avatar.UpdateColors(true);
+                }
+            }
+        }
+
+        // Rebuild once to bake the DNA + color changes
+        Debug.Log("ApplyCalibration: Rebuilding character");
+        avatar.BuildCharacter(true);
     }
 
     void LateUpdate()
