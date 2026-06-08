@@ -3,6 +3,10 @@ cv/venv/
 cv/src/__pycache__/
 *.mp4
 
+#Ingore UMA
+unity_renderer/Assets/UMA.meta
+unity_renderer/Assets/UMA/
+
 # This .gitignore file should be placed at the root of your Unity project directory
 #
 # Get latest from https://github.com/github/gitignore/blob/main/Unity.gitignore
