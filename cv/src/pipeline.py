@@ -168,92 +168,40 @@ def main():
                     if is_calibrating:
                         def dist(i1, i2): return calculate_distance(landmarks[i1], landmarks[i2])
                         
-                        # Use face height as anchor (Forehead 10 to Chin 152)
-                        face_height = dist(10, 152)
+                        # Use interpupillary distance (inner eye corners) as a stable anchor (133 to 362)
+                        anchor_dist = dist(133, 362)
                         
-                        if face_height > 0.001:
-                            # Raw ratios relative to face height
+                        if anchor_dist > 0.001:
+                            # Raw ratios relative to stable anchor
                             raw = {
-                                'headWidth': dist(234, 454) / face_height,
-                                'neckThickness': dist(132, 361) / face_height,
-                                'noseWidth': dist(129, 358) / face_height,
-                                'noseSize': (dist(168, 1) * dist(129, 358)) / (face_height**2),
-                                'nosePosition': dist(168, 1) / face_height,
+                                'headWidth': dist(234, 454) / anchor_dist,
+                                'neckThickness': dist(132, 361) / anchor_dist,
+                                'noseWidth': dist(129, 358) / anchor_dist,
+                                'noseSize': (dist(168, 1) * dist(129, 358)) / (anchor_dist**2),
+                                'nosePosition': dist(168, 1) / anchor_dist,
                                 'nosePronounced': (landmarks[168].z - landmarks[1].z),
                                 'noseFlatten': (landmarks[1].z - landmarks[168].z),
-                                'chinSize': dist(17, 152) / face_height,
+                                'chinSize': dist(17, 152) / anchor_dist,
                                 'chinPronounced': (landmarks[1].z - landmarks[152].z),
-                                'chinPosition': dist(1, 152) / face_height,
-                                'mandibleSize': dist(132, 361) / face_height,
-                                'jawsSize': dist(172, 397) / face_height,
-                                'jawsPosition': dist(1, 152) / face_height,
-                                'cheekSize': dist(116, 345) / face_height,
-                                'cheekPosition': dist(168, 116) / face_height,
+                                'chinPosition': dist(1, 152) / anchor_dist,
+                                'mandibleSize': dist(132, 361) / anchor_dist,
+                                'jawsSize': dist(172, 397) / anchor_dist,
+                                'jawsPosition': dist(1, 152) / anchor_dist,
+                                'cheekSize': dist(116, 345) / anchor_dist,
+                                'cheekPosition': dist(168, 116) / anchor_dist,
                                 'lowCheekPronounced': (landmarks[168].z - landmarks[116].z),
-                                'lowCheekPosition': dist(1, 116) / face_height,
-                                'foreheadSize': dist(10, 168) / face_height,
-                                'lipsSize': dist(0, 17) / face_height,
-                                'mouthSize': dist(61, 291) / face_height,
-                                'eyeSize': (dist(159, 145) + dist(386, 374)) / (2 * face_height),
-                                'eyeSpacing': dist(133, 362) / face_height,
+                                'lowCheekPosition': dist(1, 116) / anchor_dist,
+                                'foreheadSize': dist(10, 168) / anchor_dist,
+                                'lipsSize': dist(0, 17) / anchor_dist,
+                                'mouthSize': dist(61, 291) / anchor_dist,
+                                'eyeSize': (dist(159, 145) + dist(386, 374)) / (2 * anchor_dist),
+                                'eyeSpacing': dist(133, 362) / anchor_dist, # Should be roughly 1.0
                             }
 
-                            # Baselines for neutral 0.5
-                            baselines = {
-                                'headWidth': 0.75,
-                                'neckThickness': 0.55,
-                                'noseWidth': 0.18,
-                                'noseSize': 0.05,
-                                'nosePosition': 0.25,
-                                'nosePronounced': 0.05,
-                                'noseFlatten': -0.05,
-                                'chinSize': 0.12,
-                                'chinPronounced': 0.02,
-                                'chinPosition': 0.35,
-                                'mandibleSize': 0.55,
-                                'jawsSize': 0.65,
-                                'jawsPosition': 0.35,
-                                'cheekSize': 0.70,
-                                'cheekPosition': 0.20,
-                                'lowCheekPronounced': 0.02,
-                                'lowCheekPosition': 0.15,
-                                'foreheadSize': 0.25,
-                                'lipsSize': 0.08,
-                                'mouthSize': 0.35,
-                                'eyeSize': 0.06,
-                                'eyeSpacing': 0.28,
-                            }
-
-                            dna_params = {}
-                            # SENSITIVITY: 1.0 = full mapping, 0.2 = very subtle changes.
-                            sensitivity = 0.4 
-                            
-                            # Standard parameters
-                            for k, v in raw.items():
-                                base = baselines.get(k, 0.5)
-                                
-                                # Specific dampening for cheeks to avoid "sharp/skeletal" look
-                                current_sensitivity = sensitivity
-                                if 'cheek' in k.lower() or 'Cheek' in k:
-                                    current_sensitivity *= 0.5 # Extra soft for cheeks
-
-                                if 'Pronounced' in k or 'Flatten' in k:
-                                    # Depth is small, use different scaling
-                                    dna_params[k] = np.clip(0.5 + (v - base) * 2.0 * current_sensitivity, 0.0, 1.0)
-                                else:
-                                    # Calculate % deviation from baseline and apply sensitivity
-                                    deviation = (v - base) / base
-                                    dna_params[k] = np.clip(0.5 + (deviation * current_sensitivity), 0.0, 1.0)
-                            
-                            # Reset headSize to neutral 0.5 (safe baseline)
-                            dna_params['headSize'] = 0.5
-                            dna_params['height'] = 0.5 
-
-                            
                             if not accumulated_ratios:
-                                accumulated_ratios = {k: 0.0 for k in dna_params.keys()}
+                                accumulated_ratios = {k: 0.0 for k in raw.keys()}
                                 
-                            for k, v in dna_params.items():
+                            for k, v in raw.items():
                                 accumulated_ratios[k] += v
 
                             h, w, _ = frame_rgb.shape
@@ -265,9 +213,14 @@ def main():
                             for idx in color_points:
                                 lx = int(landmarks[idx].x * w)
                                 ly = int(landmarks[idx].y * h)
-                                if 0 <= lx < w and 0 <= ly < h:
-                                    frame_color += frame_rgb[ly, lx]
-                                    pts_sampled += 1
+                                # Sample a small patch to reduce noise
+                                patch_size = 2
+                                for dy in range(-patch_size, patch_size + 1):
+                                    for dx in range(-patch_size, patch_size + 1):
+                                        px, py = lx + dx, ly + dy
+                                        if 0 <= px < w and 0 <= py < h:
+                                            frame_color += frame_rgb[py, px]
+                                            pts_sampled += 1
                                     
                             if pts_sampled > 0:
                                 accumulated_color += (frame_color / pts_sampled)
@@ -279,7 +232,28 @@ def main():
                                 final_dna = {
                                     k: v / calibration_max_frames for k, v in accumulated_ratios.items()
                                 }
-                                final_color = (accumulated_color / calibration_max_frames).astype(int)
+                                
+                                avg_color = accumulated_color / calibration_max_frames
+                                
+                                import colorsys
+                                # Color Correction to fix the "sunburn" effect
+                                # UMA has built-in Subsurface Scattering (SSS) which adds a lot of red/warmth.
+                                # If we pass raw webcam colors, the double-warmth looks like burns.
+                                r_norm, g_norm, b_norm = avg_color[0]/255.0, avg_color[1]/255.0, avg_color[2]/255.0
+                                hue, sat, val = colorsys.rgb_to_hsv(r_norm, g_norm, b_norm)
+                                
+                                # 1. Aggressively clamp saturation
+                                sat = min(sat, 0.20) 
+                                
+                                # 2. Shift hue away from red (0.0/1.0) towards yellow/beige (~0.12 - 0.15)
+                                if hue < 0.1 or hue > 0.9:
+                                    hue = 0.12 
+                                
+                                # 3. Boost brightness to counter webcam dimness
+                                val = min(1.0, val * 1.3)
+                                
+                                r_new, g_new, b_new = colorsys.hsv_to_rgb(hue, sat, val)
+                                final_color = np.array([int(r_new * 255), int(g_new * 255), int(b_new * 255)])
                                 
                                 # Add skin color DNA
                                 final_dna['skinRedness'] = final_color[0] / 255.0
@@ -288,7 +262,7 @@ def main():
 
                                 cal_payload = {
                                     "type": "calibration",
-                                    "dna": final_dna,
+                                    "ratios": final_dna,
                                     "skin_color": final_color.tolist()
                                 }
                                 udp_socket.sendto(json.dumps(cal_payload).encode('utf-8'), target_addr)

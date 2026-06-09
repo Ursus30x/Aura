@@ -4,6 +4,24 @@ using UMA.CharacterSystem;
 using UMA.PoseTools;
 using System;
 using System.Globalization;
+using System.Collections.Generic;
+
+[Serializable]
+public class DNAMapping {
+    [Tooltip("The raw ratio key sent from Python (e.g., 'noseWidth')")]
+    public string ratioName; 
+    
+    [Tooltip("The exact name of the UMA DNA slider (e.g., 'noseWidth')")]
+    public string umaDnaName;
+
+    [Header("Input (From Python)")]
+    public float minRatio;
+    public float maxRatio;
+
+    [Header("Output (To UMA)")]
+    [Range(0f, 1f)] public float minDNA = 0.0f;
+    [Range(0f, 1f)] public float maxDNA = 1.0f;
+}
 
 [Serializable]
 public class RotationData {
@@ -77,10 +95,33 @@ public class DirectBoneController : MonoBehaviour
     [Header("Calibration")]
     [Tooltip("Apply the one-shot calibration packet (face DNA + skin color) sent by the CV pipeline.")]
     public bool applyCalibration = true;
-    [Tooltip("Multipliers on the raw calibration ratios before they are written to UMA DNA.")]
-    public float noseWidthScale = 1.5f;
-    public float mouthSizeScale = 1.2f;
-    public float eyeSpacingScale = 2.0f;
+    
+    [Header("Calibration Mappings")]
+    public List<DNAMapping> dnaMappings = new List<DNAMapping>() {
+        new DNAMapping { ratioName = "headWidth", umaDnaName = "headWidth", minRatio = 3.6f, maxRatio = 4.3f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "neckThickness", umaDnaName = "neckThickness", minRatio = 3.5f, maxRatio = 4.1f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "noseWidth", umaDnaName = "noseWidth", minRatio = 0.35f, maxRatio = 0.5f, minDNA = 0.1f, maxDNA = 0.9f },
+        new DNAMapping { ratioName = "noseSize", umaDnaName = "noseSize", minRatio = 1.0f, maxRatio = 1.3f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "nosePosition", umaDnaName = "nosePosition", minRatio = 1.2f, maxRatio = 1.9f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "nosePronounced", umaDnaName = "nosePronounced", minRatio = 2.0f, maxRatio = 3.2f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "noseFlatten", umaDnaName = "noseFlatten", minRatio = -3.2f, maxRatio = -2.0f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "chinSize", umaDnaName = "chinSize", minRatio = 1.0f, maxRatio = 1.5f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "chinPronounced", umaDnaName = "chinPronounced", minRatio = 0.25f, maxRatio = 0.6f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "chinPosition", umaDnaName = "chinPosition", minRatio = 2.2f, maxRatio = 3.0f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "mandibleSize", umaDnaName = "mandibleSize", minRatio = 3.4f, maxRatio = 4.2f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "jawsSize", umaDnaName = "jawsSize", minRatio = 2.8f, maxRatio = 3.5f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "jawsPosition", umaDnaName = "jawsPosition", minRatio = 2.2f, maxRatio = 3.0f, minDNA = 0.2f, maxDNA = 0.8f }, // Estimated based on chin
+        new DNAMapping { ratioName = "cheekSize", umaDnaName = "cheekSize", minRatio = 3.0f, maxRatio = 4.0f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "cheekSize", umaDnaName = "lowCheekPronounced", minRatio = 3.0f, maxRatio = 4.0f, minDNA = 0.1f, maxDNA = 0.5f },
+        new DNAMapping { ratioName = "cheekPosition", umaDnaName = "cheekPosition", minRatio = 1.7f, maxRatio = 2.4f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "lowCheekPronounced", umaDnaName = "lowCheekPronounced", minRatio = 1.3f, maxRatio = 2.0f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "lowCheekPosition", umaDnaName = "lowCheekPosition", minRatio = 1.5f, maxRatio = 2.5f, minDNA = 0.2f, maxDNA = 0.8f }, // Estimated
+        new DNAMapping { ratioName = "foreheadSize", umaDnaName = "foreheadSize", minRatio = 1.2f, maxRatio = 1.8f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "lipsSize", umaDnaName = "lipsSize", minRatio = 0.25f, maxRatio = 0.85f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "mouthSize", umaDnaName = "mouthSize", minRatio = 1.1f, maxRatio = 1.5f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "eyeSize", umaDnaName = "eyeSize", minRatio = 0.20f, maxRatio = 0.35f, minDNA = 0.2f, maxDNA = 0.8f },
+        new DNAMapping { ratioName = "eyeSpacing", umaDnaName = "eyeSpacing", minRatio = 0.9f, maxRatio = 1.1f, minDNA = 0.2f, maxDNA = 0.8f }
+    };
 
     private UMAData umaData;
     private UMAExpressionPlayer expressionPlayer;
@@ -308,27 +349,41 @@ public class DirectBoneController : MonoBehaviour
             return;
         }
 
-        // Robust parsing for "dna": { ... }
-        string dnaMarker = "\"dna\"";
-        int dnaIdx = json.IndexOf(dnaMarker);
-        if (dnaIdx != -1) {
-            int startBrace = json.IndexOf('{', dnaIdx);
+        // Robust parsing for "ratios": { ... }
+        string ratiosMarker = "\"ratios\"";
+        int ratiosIdx = json.IndexOf(ratiosMarker);
+        if (ratiosIdx != -1) {
+            int startBrace = json.IndexOf('{', ratiosIdx);
             int endBrace = json.IndexOf('}', startBrace);
             if (startBrace != -1 && endBrace > startBrace) {
-                string dnaContent = json.Substring(startBrace + 1, endBrace - startBrace - 1);
-                string[] pairs = dnaContent.Split(',');
+                string ratiosContent = json.Substring(startBrace + 1, endBrace - startBrace - 1);
+                string[] pairs = ratiosContent.Split(',');
+                
+                Dictionary<string, float> rawRatios = new Dictionary<string, float>();
                 foreach (string pair in pairs) {
                     string[] kv = pair.Split(':');
                     if (kv.Length == 2) {
                         string key = kv[0].Trim(' ', '\"', '\n', '\r', '\t');
                         string valStr = kv[1].Trim(' ', '\"', '\n', '\r', '\t');
                         if (float.TryParse(valStr, NumberStyles.Float, CultureInfo.InvariantCulture, out float val)) {
-                            if (dna.ContainsKey(key)) {
-                                Debug.Log($"ApplyCalibration: Setting DNA {key} to {val}");
-                                dna[key].Set(Mathf.Clamp01(val));
-                            } else {
-                                // Debug.LogWarning($"ApplyCalibration: DNA key {key} not found in avatar");
-                            }
+                            rawRatios[key] = val;
+                        }
+                    }
+                }
+                
+                // Set defaults for stable values
+                if (dna.ContainsKey("headSize")) dna["headSize"].Set(0.5f);
+                if (dna.ContainsKey("height")) dna["height"].Set(0.5f);
+                
+                // Map raw ratios to UMA DNA values
+                foreach (var mapping in dnaMappings) {
+                    if (rawRatios.TryGetValue(mapping.ratioName, out float rawVal)) {
+                        float t = Mathf.InverseLerp(mapping.minRatio, mapping.maxRatio, rawVal);
+                        float finalDnaVal = Mathf.Lerp(mapping.minDNA, mapping.maxDNA, t);
+                        
+                        if (dna.ContainsKey(mapping.umaDnaName)) {
+                            Debug.Log($"Mapped {mapping.ratioName}({rawVal:F2}) -> {mapping.umaDnaName}({finalDnaVal:F2})");
+                            dna[mapping.umaDnaName].Set(Mathf.Clamp01(finalDnaVal));
                         }
                     }
                 }
@@ -362,7 +417,7 @@ public class DirectBoneController : MonoBehaviour
 
     void LateUpdate()
     {
-        if (!initialized || umaData == null || !applyRotation) return;
+        if (!initialized || umaData == null || umaData.skeleton == null || !applyRotation) return;
 
         // TRACKING LOSS RECOVERY
         // If we haven't received a packet recently (e.g., user turned completely away),

@@ -103,7 +103,8 @@ class MultiViewCalibrator:
                     view_type = self.identify_view(filename, rotation)
                     print(f"Processing {filename} as view: {view_type} (Rot: {rotation[0]:.1f}, {rotation[1]:.1f})")
                     
-                    view_data = self.extract_features(landmarks, view_type)
+                    h, w, _ = frame.shape
+                    view_data = self.extract_features(landmarks, view_type, w, h)
                     results[view_type] = view_data
                     
                     debug_frame = frame.copy()
@@ -125,7 +126,7 @@ class MultiViewCalibrator:
         final_dna = self.aggregate_results(results)
         final_color = np.mean(skin_colors, axis=0).astype(int).tolist() if skin_colors else [200, 180, 160]
         
-        return {"type": "calibration", "dna": final_dna, "skin_color": final_color}
+        return {"type": "calibration", "ratios": final_dna, "skin_color": final_color}
 
     def identify_view(self, filename, rotation):
         fname = filename.lower()
@@ -142,34 +143,44 @@ class MultiViewCalibrator:
         if pitch < -15: return 'top'
         return 'front'
 
-    def extract_features(self, landmarks, view_type):
-        def dist(i1, i2): return calculate_distance(landmarks[i1], landmarks[i2])
-        anchor = dist(33, 263)
+    def extract_features(self, landmarks, view_type, w, h):
+        def dist_2d(i1, i2): 
+            dx = (landmarks[i1].x - landmarks[i2].x) * w
+            dy = (landmarks[i1].y - landmarks[i2].y) * h
+            return math.sqrt(dx**2 + dy**2)
+            
+        # MediaPipe Z is scaled roughly to X (width)
+        def z_val(idx): return landmarks[idx].z * w
+
+        # Anchor on inner eye corners instead of outer corners
+        anchor = dist_2d(133, 362)
         if anchor < 0.001: return {}
         data = {
-            'headWidth': dist(234, 454) / anchor,
-            'eyeSpacing': dist(133, 362) / anchor,
-            'noseWidth': dist(193, 417) / anchor, # Bridge
-            'noseSize': dist(129, 358) / anchor,  # Nostrils
-            'mouthSize': dist(61, 291) / anchor,
-            'chinSize': dist(17, 152) / anchor,
-            'chinPosition': dist(1, 152) / anchor,
-            'mandibleSize': dist(132, 361) / anchor,
-            'jawsSize': dist(172, 397) / anchor,
-            'cheekSize': dist(116, 345) / anchor,
-            'cheekPosition': dist(168, 116) / anchor,
-            'foreheadSize': dist(10, 168) / anchor,
-            'lipsSize': dist(0, 17) / anchor,
-            'neckThickness': dist(132, 361) / anchor,
-            'nosePosition': dist(168, 1) / anchor,
-            'eyeSize': (dist(159, 145) + dist(386, 374)) / (2 * anchor)
+            'headWidth': dist_2d(234, 454) / anchor,
+            'eyeSpacing': dist_2d(133, 362) / anchor, # Should be 1.0
+            'noseWidth': dist_2d(193, 417) / anchor, # Bridge
+            'noseSize': dist_2d(129, 358) / anchor,  # Nostrils
+            'mouthSize': dist_2d(61, 291) / anchor,
+            'chinSize': dist_2d(17, 152) / anchor,
+            'chinPosition': dist_2d(1, 152) / anchor,
+            'mandibleSize': dist_2d(132, 361) / anchor,
+            'jawsSize': dist_2d(172, 397) / anchor,
+            'cheekSize': dist_2d(116, 345) / anchor,
+            'cheekPosition': dist_2d(168, 116) / anchor,
+            'foreheadSize': dist_2d(10, 168) / anchor,
+            'lipsSize': dist_2d(0, 17) / anchor,
+            'neckThickness': dist_2d(132, 361) / anchor,
+            'nosePosition': dist_2d(168, 1) / anchor,
+            'eyeSize': (dist_2d(159, 145) + dist_2d(386, 374)) / (2 * anchor)
         }
-        data['nosePronounced'] = abs(landmarks[1].z - landmarks[234].z) / anchor
+        data['nosePronounced'] = abs(z_val(1) - z_val(234)) / anchor
         data['noseFlatten'] = -data['nosePronounced']
-        data['chinPronounced'] = abs(landmarks[152].z - landmarks[17].z) / anchor
-        data['lowCheekPronounced'] = abs(landmarks[116].z - landmarks[1].z) / anchor
+        data['chinPronounced'] = abs(z_val(152) - z_val(17)) / anchor
+        data['lowCheekPronounced'] = abs(z_val(116) - z_val(1)) / anchor
         if view_type in ['left', 'right']:
-            data['noseCurve'] = (landmarks[1].y - landmarks[168].y) / (landmarks[1].z - landmarks[168].z + 0.001)
+            dy = (landmarks[1].y - landmarks[168].y) * h
+            dz = (z_val(1) - z_val(168)) + 0.001
+            data['noseCurve'] = dy / dz
         return data
 
     def extract_skin_color(self, img_rgb, landmarks):
@@ -228,22 +239,7 @@ class MultiViewCalibrator:
         print("\nRaw Aggregated Ratios:")
         for k, v in merged_raw.items(): print(f"  {k:20s}: {v:.4f}")
             
-        dna = {k: 0.5 for k in self.ranges.keys()}
-        for k, v in merged_raw.items():
-            if k in self.ranges:
-                r_min, r_max = self.ranges[k]
-                t = (v - r_min) / (r_max - r_min) if r_max != r_min else 0.5
-                
-                current_sensitivity = self.sensitivity
-                if k == 'eyeSize':
-                    current_sensitivity = 0.3  # Silne tłumienie, żeby oczodoły nie rosły jak u kosmity
-                elif k == 'lipsSize':
-                    current_sensitivity = 0.3  # Tłumienie wargi, by nie właziła na nos
-                    
-                dna[k] = np.clip(0.5 + (t - 0.5) * current_sensitivity, 0.0, 1.0)
-        dna['headSize'] = 0.5
-        dna['height'] = 0.5
-        return dna
+        return merged_raw
 
 def main():
     parser = argparse.ArgumentParser()
@@ -256,7 +252,7 @@ def main():
     payload = calibrator.process_folder(args.dir)
     if payload:
         print("\nFinal DNA Calibration:")
-        for k, v in payload['dna'].items(): print(f"  {k:20s}: {v:.4f}")
+        for k, v in payload['ratios'].items(): print(f"  {k:20s}: {v:.4f}")
         udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         udp_socket.sendto(json.dumps(payload).encode('utf-8'), ("127.0.0.1", args.port))
         with open("calibration_result.json", "w") as f: json.dump(payload, f, indent=2)
